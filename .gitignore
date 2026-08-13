@@ -4,3 +4,4 @@
 *.dat
 dust_data/irac.txt
 /__pycache__
+/LBGforecast_training/
