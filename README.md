@@ -4,7 +4,17 @@ Forecasts constraints on cosmological parameters from LSST Lyman-Break Galaxies 
 
 # Background
 
-LBGForecast forecasts how uncertainty in the redshift distribution n(z) of LSST LBG samples at z~3-5 propagates into cosmological parameter constraints derived from angular clustering (Cl power spectra). That uncertainty is driven by the diversity of the underlying galaxy population — dust attenuation, star-formation history, stellar mass — which is captured through Stellar Population Synthesis (SPS) modelling. The pipeline runs in five stages: (1) sample SPS parameter vectors from priors (stellar mass function, dust attenuation, cosmic star-formation-rate density) that are calibrated to literature data as Gaussian Processes in redshift; (2) simulate or emulate LSST photometry for each sampled galaxy; (3) apply realistic photometric noise and Lyman-break colour-colour (dropout) selection to obtain simulated n(z) realisations; (4) compress the ensemble of n(z) realisations with PCA; (5) forecast cosmological constraints with a Fisher-matrix likelihood that analytically marginalises over the PCA-compressed n(z) uncertainty. This work is tied to a PhD thesis (the upstream commit history includes entries such as "thesis corrections" and "reviewer comments work").
+Lyman-break galaxies (LBGs) are star-forming galaxies identified by the sharp drop in their observed flux blueward of the redshifted Lyman limit — a colour "dropout" between adjacent photometric bands, rather than a measured spectroscopic redshift. LSST will find enormous numbers of them at z ~ 3-5, a regime hard to reach spectroscopically at that depth, making them attractive tracers of large-scale structure for cosmology. The catch: a colour-selected sample's true redshifts are entangled with each galaxy's (unknown) dust attenuation, star-formation history and stellar mass, so the sample's redshift distribution, n(z), is itself uncertain — and that uncertainty, left unpropagated, biases and inflates the cosmological constraints drawn from the sample's angular clustering (Cl power spectra).
+
+LBGForecast quantifies that effect end-to-end:
+
+1. Sample galaxy properties (dust, star-formation history, mass, redshift, …) from priors calibrated to literature data as Gaussian Processes in redshift.
+2. Simulate or emulate the resulting LSST photometry with Stellar Population Synthesis (SPS) modelling.
+3. Apply realistic photometric noise and Lyman-break colour cuts to select simulated dropout samples, and derive their n(z).
+4. Compress the resulting ensemble of n(z) realisations with PCA (Principal Component Analysis) into a handful of coefficients.
+5. Forecast cosmological constraints with a Fisher-matrix likelihood (a fast, linearised estimate of parameter uncertainty, used in place of a full MCMC) that analytically marginalises over that PCA-compressed n(z) uncertainty — turning "how much we don't know about n(z)" directly into "how much that costs us in cosmological precision."
+
+This work is tied to a PhD thesis — the commit history upstream includes entries like "thesis corrections" and "reviewer comments work."
 
 # Repository layout
 
@@ -18,7 +28,7 @@ LBGForecast forecasts how uncertainty in the redshift distribution n(z) of LSST 
 
 # Installation
 
-1. Install FSPS (via `python-fsps`). This wraps a *compiled* FSPS installation, not a plain `pip install` — you need a working FSPS build and the `SPS_HOME` environment variable pointing at it. Note that `lbg_forecast/sps.py` and `train_nn.py` currently hardcode a developer's local `SPS_HOME` path at import time; you will need to edit these for your own machine (ideally replacing the hardcoded path with `os.environ["SPS_HOME"]`). See `docs/KNOWN_ISSUES.md`.
+1. Install FSPS (Flexible Stellar Population Synthesis — the code used here to generate model galaxy spectra), via `python-fsps`. This wraps a *compiled* FSPS installation, not a plain `pip install` — you need a working FSPS build and the `SPS_HOME` environment variable pointing at it. Note that `lbg_forecast/sps.py` and `train_nn.py` currently hardcode a developer's local `SPS_HOME` path at import time; you will need to edit these for your own machine (ideally replacing the hardcoded path with `os.environ["SPS_HOME"]`). See `docs/KNOWN_ISSUES.md`.
 2. Install the Speculator (Alsing et al. 2019) fork used here as the neural-network photometry emulator ("Photulator"):
 ```
 pip install git+https://github.com/fpetri115/speculator.git
@@ -43,7 +53,7 @@ Before step 1 of the pipeline, the three Gaussian-Process priors (stellar mass f
 ```
 mpiexec -n nproc python sample_sps_params.py ngals nrealisations run path mean
 ```
-Uses MPI to sample SPS parameters for `ngals` galaxies, giving a total of `nproc x nrealisations` realisations. SPS parameters are saved as `path/sps_parameter_samples/sps_{run}.npy` and `sparams_{run}.npy`. Set `mean=1` to sample the mean of the prior, or `mean=0` to draw `nproc x nrealisations` different stochastic prior realisations.
+Uses MPI (splits the sampling across many CPU cores in parallel, since each galaxy is drawn independently) to sample SPS parameters for `ngals` galaxies, giving a total of `nproc x nrealisations` realisations. SPS parameters are saved as `path/sps_parameter_samples/sps_{run}.npy` and `sparams_{run}.npy`. Set `mean=1` to sample the mean of the prior, or `mean=0` to draw `nproc x nrealisations` different stochastic prior realisations.
 
 ### 2. Simulate photometry
 
