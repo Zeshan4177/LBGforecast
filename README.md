@@ -1,44 +1,95 @@
-# ***DOCUMENTATION IN PROGRESS***
 # LBGForecast
-Forecasts constraints on cosmological parameters for LSST Lyman-Break Galaxies (LBGs) at z~3-5. Incorporates redshift distribution uncertainties using Stellar Population Synthesis (SPS) simulations.
+
+Forecasts constraints on cosmological parameters from LSST Lyman-Break Galaxies (LBGs) at z~3-5. Incorporates redshift-distribution (n(z)) uncertainties using Stellar Population Synthesis (SPS) simulations.
 
 # Background
 
+LBGForecast forecasts how uncertainty in the redshift distribution n(z) of LSST LBG samples at z~3-5 propagates into cosmological parameter constraints derived from angular clustering (Cl power spectra). That uncertainty is driven by the diversity of the underlying galaxy population — dust attenuation, star-formation history, stellar mass — which is captured through Stellar Population Synthesis (SPS) modelling. The pipeline runs in five stages: (1) sample SPS parameter vectors from priors (stellar mass function, dust attenuation, cosmic star-formation-rate density) that are calibrated to literature data as Gaussian Processes in redshift; (2) simulate or emulate LSST photometry for each sampled galaxy; (3) apply realistic photometric noise and Lyman-break colour-colour (dropout) selection to obtain simulated n(z) realisations; (4) compress the ensemble of n(z) realisations with PCA; (5) forecast cosmological constraints with a Fisher-matrix likelihood that analytically marginalises over the PCA-compressed n(z) uncertainty. This work is tied to a PhD thesis (the upstream commit history includes entries such as "thesis corrections" and "reviewer comments work").
+
+# Repository layout
+
+- `lbg_forecast/` — the core Python package: priors, the FSPS interface, the photometry emulator, the noise and selection model, PCA n(z) modelling, and the angular power spectrum / Fisher likelihood.
+- top-level `*.py` / `*.sh` — pipeline driver scripts (see "Running the forecast pipeline" below).
+- `gp_models/` — trained Gaussian-Process prior weights (mass function, dust, CSFRD), produced by the `GP_*.ipynb` notebooks.
+- `sps_parameter_samples/`, `photo_samples/`, `nz_samples/`, `training_data/`, `trained_models/` — pipeline intermediate and output data. The large `.npy` arrays are gitignored and not distributed with the repo (see "Data availability" below).
+- `dust_data/`, `csfr_data/`, `current_best_model/`, `sfr_emulator/`, `inoue14/`, `corrections/` — reference and calibration data consumed by the priors and IGM (intergalactic-medium absorption) modules.
+- root `*.ipynb` — analysis and test notebooks (dozens of them); see `docs/MODULE_REFERENCE.md` for which are pipeline entry points versus dev-test scratch notebooks.
+- `docs/` — detailed module reference and known-issues notes (added alongside this README).
+
 # Installation
 
-1. Install FSPS
-2. Install prerequisites 
-3. Install Speculator (Alsing et al. 2019) fork: ``pip install git+https://github.com/fpetri115/speculator.git``
-4. git clone repo
+1. Install FSPS (via `python-fsps`). This wraps a *compiled* FSPS installation, not a plain `pip install` — you need a working FSPS build and the `SPS_HOME` environment variable pointing at it. Note that `lbg_forecast/sps.py` and `train_nn.py` currently hardcode a developer's local `SPS_HOME` path at import time; you will need to edit these for your own machine (ideally replacing the hardcoded path with `os.environ["SPS_HOME"]`). See `docs/KNOWN_ISSUES.md`.
+2. Install the Speculator (Alsing et al. 2019) fork used here as the neural-network photometry emulator ("Photulator"):
+```
+pip install git+https://github.com/fpetri115/speculator.git
+```
+3. `git clone` this repository, then install the remaining Python dependencies:
+```
+pip install -r requirements.txt
+```
+   Two things worth flagging about this file:
+   - **`jax` and `jax-cosmo` are required but not listed.** The angular-power-spectrum and forecast-likelihood modules (`lbg_forecast/angular_power.py`, `likelihood.py`, and the `modified_*.py` clustering modules) import them, but they appear in neither `requirements.txt` nor `requirements_test.txt`. Install them separately (`pip install jax jax-cosmo`), or step 5 of the pipeline below will fail on import.
+   - Two PyPI package names differ from their import names: `astro-prospector` is imported as `prospect`, and `astro-sedpy` is imported as `sedpy`.
+4. `pip install -e .` (via `setup.py`) does **not** currently work — `setup.py`'s `package_dir`/`package_data` point at stale paths left over from an earlier repo layout. For now, install dependencies from `requirements.txt` and run the scripts below directly from the repo root rather than installing the package. See `docs/KNOWN_ISSUES.md`.
 
-# Performing the Forecast
+# Calibrating the priors
+
+Before step 1 of the pipeline, the three Gaussian-Process priors (stellar mass function, dust attenuation, cosmic star-formation-rate density) need to be fit and saved to `gp_models/*.pth`. This is done with the notebooks `GP_MASSFUNC.ipynb`, `GP_DUST.ipynb` (or `GP_DUST_NAG.ipynb` for the variant calibrated against Nagaraj et al. 2022), and `GP_CSFRD.ipynb`. Pre-fit weights are already included under `gp_models/`, so you only need to re-run these notebooks if you want to refit against updated literature data.
+
+# Running the forecast pipeline
+
 ### 1. Sample SPS Parameters from Priors
 
 ```
-mpiexec -n nproc python sample_sps_params.py 100000 real id path mean
+mpiexec -n nproc python sample_sps_params.py ngals nrealisations run path mean
 ```
-Uses MPI to sample SPS parameters for 100000 galaxies, for a total of (nproc x real) realisations each. SPS parameters will be saved as sps_id.npy in path/LBGForecast/sps_parameter_samples. To sample the mean prior, set mean=1, otherwise set mean=0 to sample different (nproc x real) prior realisations.
+Uses MPI to sample SPS parameters for `ngals` galaxies, giving a total of `nproc x nrealisations` realisations. SPS parameters are saved as `path/sps_parameter_samples/sps_{run}.npy` and `sparams_{run}.npy`. Set `mean=1` to sample the mean of the prior, or `mean=0` to draw `nproc x nrealisations` different stochastic prior realisations.
 
-### 2. Simulate photometry 
+### 2. Simulate photometry
 
-#### Option 1: Use Emulator with GPU (faster)
+#### Option 1: Use the emulator (faster, GPU recommended)
 ```
-python sample_photometry.py path id batch_size
+python sample_photometry.py path run batch_size
 ```
-Generates noiseless photometry for LSST ugriz bands saved as photo_id.npy in path/LBGForecast/photo_samples.
+Generates noiseless LSST ugriz photometry using the trained Photulator networks in `trained_models/model_0x0lsst_{u,g,r,i,z}` (requires TensorFlow). Output is saved as `path/photo_samples/photo_{run}.npy`.
 
-#### Option 2: Use Python FSPS
+#### Option 2: Use FSPS directly (exact, slower)
 ```
-mpiexec -n nproc python simulate_sps.py id path bands
+mpiexec -n nproc python simulate_sps.py run path filters
 ```
-Generates noiseless photometry using either LSST ugrizy (bands = "lsst") or HSC grizy (bands = "suprimecam") filters. Photometry saved as sim_photo_id_bands.npy in path/LBGForecast/photo_samples.
-### 3. Apply noise to photometry
+Generates noiseless photometry with either LSST ugrizy (`filters="lsst"`) or HSC grizy (`filters="suprimecam"`) filters. Output is saved as `path/photo_samples/sim_photo_{run}_{filters}.npy`.
+
+### 3. Apply noise and selection
 
 ```
-python photo_to_nz.py path id 0
+python photo_to_nz.py path run
 ```
-Gives redshift samples for u-, g- and r-dropouts
+Applies photometric noise (via `photerr`) and Goldrush-style colour-colour (dropout) box cuts to select u-, g-, and r-dropout LBG candidates, then derives n(z) samples for each dropout selection. Outputs land in `nz_samples/` (`nz_{run}.npy`, `n_detected_{run}.npy`) and `sps_parameter_samples/selected_sps_{run}.npy`. Some call sites pass a third positional argument to this script; the script does not currently read it (it hardcodes an internal `extra=1`), so it is a no-op — the call above with two arguments is the accurate usage.
+
+Two shell wrappers chain these three steps: `sample_nzs.sh` runs the chain once via `mpiexec`, and `batch_run_nzs.sh` loops the same chain over a range of `run` values (covering both stochastic-prior and mean-prior realisations), deleting the large intermediate files after each iteration. There is also a standalone script, `sample_nzs.py`, that does emulated photometry and n(z) derivation in a single process — it is not wired into either shell wrapper.
 
 ### 4. PCA Approximation
+
+n(z) realisations from multiple `run`s are meant to be concatenated by `compile_nzs.py`. **This script currently has two bugs that make it non-functional as written** — an argument (`nruns`) that is used without being cast to an integer, and a `np.save` call that is missing its array argument — so it needs a fix before use (see `docs/KNOWN_ISSUES.md`). In the meantime the concatenation can be done manually. Once you have a compiled n(z) ensemble, `PROCCESSING_NZs.ipynb` (or the `NzModel` class in `lbg_forecast/nz_model.py`) fits a PCA + Gaussian approximation in PCA-coefficient space, separately for each dropout sample, and writes `4pca_data/npca_*.npy` artifacts. These are consumed by the `u_dropout`, `g_dropout`, and `r_dropout` classes in `lbg_forecast/modified_redshift.py`.
+
 ### 5. Forecast Cosmological Constraints
-Marginalise over redshift distribution uncertainties
+
+The `Likelihood` class in `lbg_forecast/likelihood.py` loads the PCA n(z) artifacts, builds mock angular-clustering (Cl) data with `lbg_forecast/angular_power.py`, and computes a Fisher-matrix forecast that analytically marginalises over the PCA-coefficient covariance — propagating the n(z) uncertainty into the cosmological constraint, via `marginalised_log_likelihood` in `modified_likelihood.py`. This step is driven interactively rather than from a script: `FORECAST.ipynb` runs the full forecast, and `test_wilsonwhite.ipynb` runs a reduced two-parameter (σ₈, bias) version.
+
+# Module reference
+
+`docs/MODULE_REFERENCE.md` has a full table of every script and package module: what it does, its CLI arguments or public functions, and its inputs/outputs. Consult it before running an unfamiliar part of the pipeline.
+
+# Data availability
+
+The large sampled and simulated data arrays (`.npy` files under `sps_parameter_samples/`, `photo_samples/`, `nz_samples/`, `training_data/`, `dust_data/`, etc.) are excluded from version control via `.gitignore` and are not currently distributed with the repository. A fresh clone will not include them — you need to regenerate them by running the pipeline scripts above, or obtain them separately from the maintainer. This is the most common thing that will look "missing" after cloning.
+
+# Status & known issues
+
+`docs/KNOWN_ISSUES.md` lists known bugs, dead code, and stale notebooks found in an audit of this codebase; check it before debugging something that may already be a known issue.
+
+The neural-network photometry emulator (Speculator/Photulator, `trained_models/model_0x0lsst_*`) is currently **frozen** pending a convention migration in the upstream `speculator` package — see `EMULATOR-STATUS.md` at the repo root before relying on it.
+
+# License
+
+MIT License — see `lbg_forecast/LICENSE`.
