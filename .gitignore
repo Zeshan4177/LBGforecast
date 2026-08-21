@@ -3,5 +3,7 @@
 *.h5
 *.dat
 dust_data/irac.txt
-/__pycache__
+__pycache__/
 /LBGforecast_training/
+.venv/
+fort.*

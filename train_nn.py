@@ -1,5 +1,5 @@
 import os
-os.environ["SPS_HOME"] = "/Users/fpetri/packages/fsps" 
+os.environ.setdefault("SPS_HOME", "/home/zesha/python-fsps/src/fsps/libfsps")
 
 #DELETE ABOVE TWO LINES ON HPC
 #SWITCH OPTIMISER TO tf.keras.optimizers.Adam() ON HPC!!

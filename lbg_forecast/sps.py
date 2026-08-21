@@ -1,5 +1,5 @@
 import os
-os.environ["SPS_HOME"] = "/Users/fpetri/packages/fsps" 
+os.environ.setdefault("SPS_HOME", "/home/zesha/python-fsps/src/fsps/libfsps")
 #DELETE ABOVE TWO LINES FOR USE ON HPC
 
 import fsps
