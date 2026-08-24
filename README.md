@@ -51,9 +51,9 @@ Before step 1 of the pipeline, the three Gaussian-Process priors (stellar mass f
 ### 1. Sample SPS Parameters from Priors
 
 ```
-mpiexec -n nproc python sample_sps_params.py ngals nrealisations run path mean
+mpiexec -n nproc python sample_sps_params.py ngals nrealisations run path mean dust_choice
 ```
-Uses MPI (splits the sampling across many CPU cores in parallel, since each galaxy is drawn independently) to sample SPS parameters for `ngals` galaxies, giving a total of `nproc x nrealisations` realisations. SPS parameters are saved as `path/sps_parameter_samples/sps_{run}.npy` and `sparams_{run}.npy`. Set `mean=1` to sample the mean of the prior, or `mean=0` to draw `nproc x nrealisations` different stochastic prior realisations.
+Uses MPI (splits the sampling across many CPU cores in parallel, since each galaxy is drawn independently) to sample SPS parameters for `ngals` galaxies, giving a total of `nproc x nrealisations` realisations. SPS parameters are saved as `path/sps_parameter_samples/sps_{run}.npy` and `sparams_{run}.npy`. Set `mean=1` to sample the mean of the prior, or `mean=0` to draw `nproc x nrealisations` different stochastic prior realisations. `dust_choice` selects which calibration of the dust attenuation model to sample from: `0` = COSMOS, `1` = IRAC, `2` = Nagaraj et al. (2022). `path` must end with a trailing `/` and point at a directory containing `gp_models/` and `dust_data/` (e.g. the repo root) — both are required even when `mean=1`.
 
 ### 2. Simulate photometry
 
