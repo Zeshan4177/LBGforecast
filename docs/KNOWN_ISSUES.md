@@ -14,7 +14,7 @@ Found during a source-level documentation audit — not exhaustive.
 
 6. **Stale notebooks that will fail on import**: `test_getmags.ipynb`, `test_goldrush.ipynb`, `test_lyalpha.ipynb`, `view_lsst_cuts.ipynb` import modules that no longer exist in the package (`lbg_forecast.hyperparameters`, `lbg_forecast.priors`, `lbg_forecast.priors_old`) — these reference a prior version of the codebase. `test_goldrush.ipynb` and `view_lsst_cuts.ipynb` also hardcode `/Users/fpetri/...` paths.
 
-7. **`jax`/`jax-cosmo` undeclared dependency**: required by `angular_power.py`, `likelihood.py`, and the `modified_*.py` clustering/likelihood modules, but absent from both `requirements.txt` and `requirements_test.txt` — install manually or the forecast step will fail. Also undeclared: `gpytorch`, `emcee` and `uncertainties`, all imported by the priors and forecast code.
+7. **`jax`/`jax-cosmo` undeclared dependency**: required by `angular_power.py`, `likelihood.py`, and the `modified_*.py` clustering/likelihood modules, but absent from both `requirements.txt` and `requirements_test.txt` — install manually or the forecast step will fail.
 
 8. **`requirements.txt` vs `requirements_test.txt` disagree** on several version pins (TensorFlow, Keras, NumPy, SciPy) and only `requirements_test.txt` pins an exact Speculator commit — worth deciding which is authoritative and consolidating.
 

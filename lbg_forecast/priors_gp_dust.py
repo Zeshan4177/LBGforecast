@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import matplotlib.pyplot as plt
 import lbg_forecast.sfh as sfh
@@ -29,8 +31,18 @@ class DustPrior():
         print("Loading Models")
         self.preloaded_popcosmos_samples = np.load(self.path+"/dust_data/popcosmos_parameters_rmag_lt_25_2.npy")
         self.preloaded_recent_sfrs = np.load(self.path+"/dust_data/popcosmos_recent_sfrs.npy")
-        self.irac_z, self.irac_logm, self.irac_logsfr, self.irac_tau2, self.irac_index, self.irac_dustfrac = np.split(np.loadtxt(self.path+"/dust_data/irac.txt"), 6, axis=1)
-        self.irac_tau1 = self.irac_dustfrac*self.irac_tau2
+        # dust_data/irac.txt is gitignored and is not distributed with the repo. It
+        # feeds only the IRAC dust variant (dust_choice=1); the pop-cosmos (0) and
+        # Nagaraj (2) variants never touch it, so its absence must not be fatal.
+        irac_file = self.path+"/dust_data/irac.txt"
+        if os.path.exists(irac_file):
+            self.irac_z, self.irac_logm, self.irac_logsfr, self.irac_tau2, self.irac_index, self.irac_dustfrac = np.split(np.loadtxt(irac_file), 6, axis=1)
+            self.irac_tau1 = self.irac_dustfrac*self.irac_tau2
+        else:
+            print("NOTE: "+irac_file+" not found; the IRAC dust variant "
+                  "(dust_choice=1) is unavailable. dust_choice 0 and 2 are unaffected.")
+            self.irac_z = self.irac_logm = self.irac_logsfr = None
+            self.irac_tau2 = self.irac_index = self.irac_dustfrac = self.irac_tau1 = None
         self.n, self.tau, self.tau1, self.ne, self.taue, self.tau1e, self.sfr = self.get_nagaraj22_samples()
         self.recent_sfrs, self.dust2, self.dust_index, self.dust1 = self.get_pop_cosmos_samples(nsamples=500000)
         print("Loading Complete")
@@ -90,6 +102,12 @@ class DustPrior():
         return [dust2, dust_index, dust1]
     
     def sample_dust_model_irac(self, sfrs):
+
+        if self.irac_tau2 is None:
+            raise FileNotFoundError(
+                self.path+"/dust_data/irac.txt is required for the IRAC dust variant "
+                "(dust_choice=1) but is not present. It is gitignored and not "
+                "distributed with the repository.")
 
         dust2 = self.sample_dust2_irac(sfrs)
         dust_index = self.sample_dust_index_irac(dust2)

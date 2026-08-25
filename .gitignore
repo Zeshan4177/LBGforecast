@@ -8,3 +8,7 @@ dust_data/irac.txt
 # the compiled n(z) PCA artifacts are small (~150 KB total) and every user of the
 # forecast step needs them, so they are tracked despite the blanket *.npy rule
 !4pca_data/*.npy
+
+# DustPrior cannot be constructed at all without this (1.1 MB); it is regenerable
+# from the DustE/Nagaraj+22 model but nothing in the repo said so
+!dust_data/saved_nagaraj22samples.npy

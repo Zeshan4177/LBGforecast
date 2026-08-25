@@ -38,7 +38,7 @@ pip install git+https://github.com/fpetri115/speculator.git
 pip install -r requirements.txt
 ```
    Two things worth flagging about this file:
-   - **`jax`, `jax-cosmo`, `gpytorch`, `emcee` and `uncertainties` are required but not listed.** The angular-power-spectrum and forecast-likelihood modules (`lbg_forecast/angular_power.py`, `likelihood.py`, and the `modified_*.py` clustering modules) import them, but they appear in neither `requirements.txt` nor `requirements_test.txt`. Install them separately (`pip install jax jax-cosmo`), or step 5 of the pipeline below will fail on import.
+   - **`jax` and `jax-cosmo` are required but not listed.** The angular-power-spectrum and forecast-likelihood modules (`lbg_forecast/angular_power.py`, `likelihood.py`, and the `modified_*.py` clustering modules) import them, but they appear in neither `requirements.txt` nor `requirements_test.txt`. Install them separately (`pip install jax jax-cosmo`), or step 5 of the pipeline below will fail on import.
    - Two PyPI package names differ from their import names: `astro-prospector` is imported as `prospect`, and `astro-sedpy` is imported as `sedpy`.
 4. `pip install -e .` (via `setup.py`) does **not** currently work — `setup.py`'s `package_dir`/`package_data` point at stale paths left over from an earlier repo layout. For now, install dependencies from `requirements.txt` and run the scripts below directly from the repo root rather than installing the package. See `docs/KNOWN_ISSUES.md`.
 
