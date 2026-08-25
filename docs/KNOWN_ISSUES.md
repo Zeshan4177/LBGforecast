@@ -32,4 +32,8 @@ Found during a source-level documentation audit — not exhaustive.
 
 15. **Step 5 must be run with the repository root as the working directory**: `lbg_forecast/modified_redshift.py` sets a module-level `path = "."` and loads `4pca_data/` relative to it, ignoring any path passed to the dropout classes.
 
+16. **`npca_means_*.npy` are identically zero, for every dust model**: `pca_mean_cov` returns `np.mean(pca_coeffs)`, but scikit-learn's `PCA.transform` centres its output, so the mean of the coefficients over the training ensemble is zero by construction. `Likelihood.nz_params_mean` is therefore a zero vector, and the `_pop`/`_nag` mean-vector swap inside `Likelihood.__init__` under `mismatch_nag=` cannot do anything. The dust-model mismatch is actually applied by `cl_data_CMB_nagaraj`, via the `*_nagaraj` dropout classes that read `npca_mean_*_nag` and `npca_components_*_nag`. Not wrong, but misleading to read.
+
+17. ~~**No Nagaraj-dust (`dust_choice=2`) data survives**~~ — **fixed 2026-08-25**: regenerated from a 1,000,000-galaxy batch; see `4pca_data/README.md`. Separately, `dust_data/saved_nagaraj22samples.npy` was missing, which made `DustPrior` unconstructible and blocked prior sampling for *every* dust choice; it has been regenerated and is now tracked. `dust_data/irac.txt` is still missing and unrecoverable, but only `dust_choice=1` needs it and its absence is no longer fatal.
+
 None of these block the core pipeline (steps 1-3, 5) from running — they affect the PCA compilation step, the legacy/frozen dust and emulator variants, and packaging, specifically.

@@ -83,9 +83,13 @@ def main():
     parser.add_argument("--runs", nargs="+", default=["0", "1"], help="run labels to combine")
     parser.add_argument("--npca", type=int, default=None,
                         help="number of PCA components (default: as many as the ensemble supports)")
+    parser.add_argument("--nag-run", default=None,
+                        help="run label of a Nagaraj-dust (dust_choice=2) batch. Its n(z) becomes "
+                             "the centre of the _nag ensemble, following PROCCESSING_NZs.ipynb: "
+                             "the pop-cosmos fluctuations about their own mean are added to it.")
     parser.add_argument("--genuine-nag", action="store_true",
-                        help="redshifts/nz*_nag.npy hold a real Nagaraj-dust (dust_choice=2) "
-                             "ensemble rather than placeholders")
+                        help="redshifts/nz*_nag.npy already hold a real Nagaraj-dust ensemble; "
+                             "use them as they stand")
     args = parser.parse_args()
 
     path = os.path.abspath(args.path)
@@ -117,7 +121,24 @@ def main():
     # so they have to exist even if no Nagaraj-dust run has been simulated. The
     # Nagaraj dust prior is deterministic given the recent star-formation rate, so a
     # genuine _nag ensemble needs its own photometry pass with dust_choice=2.
-    if args.genuine_nag:
+    if args.nag_run:
+        # PROCCESSING_NZs.ipynb's recipe: the Nagaraj dust prior is deterministic given
+        # the recent star-formation rate, so one batch gives the centre of the
+        # distribution and the pop-cosmos ensemble supplies the spread about it.
+        raw_nag = derive_redshifts(path, [args.nag_run])
+        _, nag_ensemble = histogram_ensemble(raw_nag)
+        print("Nagaraj-dust batch: %d realisation(s), mean redshifts %s"
+              % (raw_nag.shape[0],
+                 " / ".join("%.2f" % np.average(z_grid, weights=a.mean(axis=0)) for a in nag_ensemble)))
+        for d, name in enumerate(("nzus", "nzgs", "nzrs")):
+            nag_centre = nag_ensemble[d].mean(axis=0)
+            pop = ensemble[d]
+            shifted = np.maximum((pop - pop.mean(axis=0)) + nag_centre, 0.0)
+            np.save(os.path.join(path, "redshifts", f"{name}_nag.npy"), shifted)
+        m_nag = NzModel(path=path + os.sep, nag=True)
+        m_nag.save_npca_data(npca, path)
+        print("wrote the _nag artifacts, centred on the dust_choice=2 batch")
+    elif args.genuine_nag:
         m_nag = NzModel(path=path + os.sep, nag=True)
         m_nag.save_npca_data(npca, path)
         print("wrote the Nagaraj-dust (_nag) artifacts from redshifts/nz*_nag.npy")
@@ -129,8 +150,8 @@ def main():
         m_nag.save_npca_data(npca, path)
         print("NOTE: the _nag artifacts are copies of the pop-cosmos ones, so the forecast\n"
               "      code imports, but any dust-model mismatch test (mismatch_nag=) is\n"
-              "      meaningless until a real dust_choice=2 run exists. Pass --genuine-nag\n"
-              "      once redshifts/nz*_nag.npy hold a true Nagaraj-dust ensemble.")
+              "      meaningless until a real dust_choice=2 run exists. Pass --nag-run LABEL\n"
+              "      to build them from one.")
 
     # likelihood.py can also ask for the no-interloper coefficient means
     for d in "ugr":

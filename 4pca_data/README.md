@@ -46,13 +46,43 @@ The **statistics** are not publication grade, for two reasons:
 Treat the current n(z) covariance as an order-of-magnitude placeholder that lets
 the forecast code run, not as the uncertainty budget of the thesis.
 
-## The `_nag` files are placeholders
+## The `_nag` files (regenerated 2026-08-25, no longer placeholders)
 
-`modified_redshift.py` loads the Nagaraj-dust (`_nag`) artifacts unconditionally, so
-they must exist. No Nagaraj-dust (`dust_choice=2`) run survives, so they are copies
-of the pop-cosmos ones. Consequence: any dust-model mismatch test (`mismatch_nag=`
-in `Likelihood`) will show zero mismatch by construction. A genuine `_nag` ensemble
-needs its own photometry pass; `build_nz_pca.py --genuine-nag` will then use it.
+The Nagaraj+22 dust variant was rebuilt from a real `dust_choice=2` batch of
+**1,000,000 galaxies**, following `PROCCESSING_NZs.ipynb`: because that dust prior is
+deterministic given the recent star-formation rate, one batch supplies the centre of
+the distribution and the pop-cosmos ensemble supplies the spread about it.
+
+    python scripts/sample_params.py . 1 1000000 2 sps_parameter_samples/sps_nag.npy
+    conda run -n lbgforecast_emu python scripts/emulate_photometry.py . \
+        sps_parameter_samples/sps_nag.npy photo_samples/photo_nag.npy
+    python build_nz_pca.py --runs 0 1 --nag-run nag --npca 10
+
+Nagaraj+22 attenuation is about twice pop-cosmos's (tau_V = 0.66 +/- 0.21 against
+0.31 +/- 0.23), and the effect on the selection is large:
+
+| | pop-cosmos | Nagaraj+22 |
+|---|---|---|
+| u-dropouts per 100k galaxies | 1,750 | 702 |
+| g-dropouts per 100k | 2,924 | 1,399 |
+| r-dropouts per 100k | 483 | 85 |
+| interloper fraction (z < 1.5), u / g / r | 6% / 10% / 5% | 27% / 28% / 31% |
+| mean redshift, u / g / r | 2.64 / 3.42 / 4.58 | 1.90 / 2.56 / 3.25 |
+| mean redshift of the z > 1.5 population | 2.79 / 3.73 / 4.80 | 2.41 / 3.32 / 4.36 |
+
+Dustier galaxies are redder and fainter, so genuine high-redshift LBGs fall out of the
+magnitude cuts (r-dropouts lose a factor 5.7) while dusty low-redshift galaxies redden
+into the colour boxes, roughly tripling the interloper fraction. That, rather than a
+shift of the high-redshift peak, is what drags the mean redshift down.
+
+Two caveats. The shapes differ enough that adding the pop-cosmos fluctuations to the
+Nagaraj centre is a cruder approximation than it is for two similar distributions.
+And `npca_means_*` is identically zero for *both* dust models: PCA coefficients are
+centred by construction, so those files carry no information. The dust-model
+difference lives entirely in `npca_mean_*` (the mean n(z) itself, 49-67% different)
+and `npca_components_*`. `Likelihood(mismatch_nag=...)` therefore does its real work
+through `cl_data_CMB_nagaraj`, not through the mean-vector swap in its `__init__`,
+which is a no-op.
 
 ## Getting a publication-grade ensemble
 
