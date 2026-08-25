@@ -1,5 +1,9 @@
 import jax
-from jax.config import config
+# jax >= 0.4.25 exposes the config object on the top-level module
+try:
+    from jax.config import config
+except ModuleNotFoundError:
+    config = jax.config
 
 config.update("jax_enable_x64", True)
 from jax import jit
@@ -41,7 +45,23 @@ from functools import partial
 
 import matplotlib.pyplot as plt
 
-NPCA=50
+# Number of PCA coefficients used per dropout sample. Read from the compiled
+# n(z) artifacts so the code follows whatever ensemble is on disk (the published
+# analysis used 50, which needs an ensemble of many more than 50 realisations).
+def _npca_from_artifacts(default=50):
+    import os
+    import numpy as _np
+    for _p in ("./4pca_data/npca_means_u.npy",
+               os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "4pca_data", "npca_means_u.npy")):
+        try:
+            return len(_np.load(_p))
+        except Exception:
+            continue
+    return default
+
+
+NPCA = _npca_from_artifacts()
 
 def define_cosmo():
     """

@@ -1,5 +1,5 @@
 import os
-os.environ["SPS_HOME"] = "/Users/fpetri/packages/fsps" 
+os.environ.setdefault("SPS_HOME", "/Users/fpetri/packages/fsps")  # honour an existing SPS_HOME if set
 #DELETE ABOVE TWO LINES FOR USE ON HPC
 
 import fsps
@@ -200,6 +200,27 @@ def redshift_fsps_spectrum(sps_model, spec):
 
 
 
+def _build_filter(kname, wave, trans):
+    """Build a sedpy Filter straight from transmission arrays.
+
+    sedpy's ``data=`` keyword sets ``filename`` to None and then type-checks it,
+    so on older sedpy versions that path always raises TypeError even though the
+    filter itself was built correctly. Fall back to assembling the object
+    directly when that happens.
+    """
+    try:
+        return observate.Filter(kname, data=(wave, trans))
+    except TypeError:
+        filt = observate.Filter.__new__(observate.Filter)
+        filt.name = kname
+        filt.nick = kname
+        filt.min_trans = 1e-5
+        filt.filename = None
+        filt._process_filter_data(np.asarray(wave), np.asarray(trans))
+        filt.get_properties()
+        return filt
+
+
 def get_lsst_filters(path):
             
     ufltr = fsps.filters.Filter(144, 'lsst_u', 'lsst')
@@ -213,7 +234,7 @@ def get_lsst_filters(path):
     for band in ['u', 'g', 'r', 'i', 'z', 'y']:
         filter_data = np.genfromtxt(path+'lbg_forecast/lsst_filters/total_'+band+'.dat', skip_header=7, delimiter=' ')
         filter_data[:, 0] = filter_data[:, 0]*10 #covert to angstroms
-        filters.append(observate.Filter("lsst_"+band, data=(filter_data[:, 0], filter_data[:, 1])))
+        filters.append(_build_filter("lsst_"+band, filter_data[:, 0], filter_data[:, 1]))
     
     return filters
 

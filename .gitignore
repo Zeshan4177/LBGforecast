@@ -5,3 +5,6 @@
 dust_data/irac.txt
 /__pycache__
 /LBGforecast_training/
+# the compiled n(z) PCA artifacts are small (~150 KB total) and every user of the
+# forecast step needs them, so they are tracked despite the blanket *.npy rule
+!4pca_data/*.npy
