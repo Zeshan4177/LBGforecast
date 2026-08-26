@@ -80,9 +80,19 @@ Two shell wrappers chain these three steps: `sample_nzs.sh` runs the chain once 
 
 ### 4. PCA Approximation
 
-n(z) realisations from multiple `run`s are meant to be concatenated by `compile_nzs.py`. **This script currently has two bugs that make it non-functional as written** — an argument (`nruns`) that is used without being cast to an integer, and a `np.save` call that is missing its array argument — so it needs a fix before use (see `docs/KNOWN_ISSUES.md`). In the meantime the concatenation can be done manually. Once you have a compiled n(z) ensemble, `PROCCESSING_NZs.ipynb` (or the `NzModel` class in `lbg_forecast/nz_model.py`) fits a PCA + Gaussian approximation in PCA-coefficient space, separately for each dropout sample, and writes `4pca_data/npca_*.npy` artifacts. These are consumed by the `u_dropout`, `g_dropout`, and `r_dropout` classes in `lbg_forecast/modified_redshift.py`.
+n(z) realisations from multiple `run`s are concatenated by `compile_nzs.py` (its two long-standing bugs were fixed on 2026-08-25). `PROCCESSING_NZs.ipynb` (or the `NzModel` class in `lbg_forecast/nz_model.py`) then fits a PCA + Gaussian approximation in PCA-coefficient space, separately for each dropout sample, and writes `4pca_data/npca_*.npy` artifacts. These are consumed by the `u_dropout`, `g_dropout`, and `r_dropout` classes in `lbg_forecast/modified_redshift.py`.
+
+Steps 3 and 4 can also be run in one non-interactive pass with
+
+```
+python build_nz_pca.py --runs 0 1 --npca 10
+```
+
+which applies the noise model and dropout cuts to photometry already in `photo_samples/`, histograms the selected redshifts into `redshifts/`, and writes `4pca_data/`. The artifacts currently in `4pca_data/` were built this way from the 12 prior realisations still on disk; **read `4pca_data/README.md` before using them for anything quantitative** — they let the forecast run, but 12 realisations badly under-sample the n(z) uncertainty the published analysis compressed into 50 components.
 
 ### 5. Forecast Cosmological Constraints
+
+Run this step **from the repository root**: `lbg_forecast/modified_redshift.py` has a module-level `path = "."` and loads `4pca_data/` relative to the working directory.
 
 The `Likelihood` class in `lbg_forecast/likelihood.py` loads the PCA n(z) artifacts, builds mock angular-clustering (Cl) data with `lbg_forecast/angular_power.py`, and computes a Fisher-matrix forecast that analytically marginalises over the PCA-coefficient covariance — propagating the n(z) uncertainty into the cosmological constraint, via `marginalised_log_likelihood` in `modified_likelihood.py`. This step is driven interactively rather than from a script: `FORECAST.ipynb` runs the full forecast, and `test_wilsonwhite.ipynb` runs a reduced two-parameter (σ₈, bias) version.
 

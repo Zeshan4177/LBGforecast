@@ -1,5 +1,9 @@
 import jax
-from jax import config
+# jax >= 0.4.25 exposes the config object on the top-level module
+try:
+    from jax.config import config
+except ModuleNotFoundError:
+    config = jax.config
 config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp
