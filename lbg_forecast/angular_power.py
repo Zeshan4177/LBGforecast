@@ -28,6 +28,7 @@ from lbg_forecast.modified_angular_cl import gaussian_cl_covariance_and_mean
 from lbg_forecast.modified_bias import custom_bias
 from lbg_forecast.modified_bias import constant_linear_bias
 from lbg_forecast.modified_bias import increasing_bias
+from lbg_forecast.modified_bias import w_w_quadratic_bias
 
 from lbg_forecast.modified_redshift import u_dropout
 from lbg_forecast.modified_redshift import g_dropout
@@ -113,11 +114,13 @@ def cl_theory_CMB(cosmo, nz_params, bias_params, ell, ndens, red):
    #     increasing_bias(bias_params[2]),
    # ]
 
-    bias = [
-        constant_linear_bias(bias_params[0]),
-        constant_linear_bias(bias_params[1]),
-        constant_linear_bias(bias_params[2]),
-    ]
+    #bias = [
+    #    constant_linear_bias(bias_params[0]),
+    #    constant_linear_bias(bias_params[1]),
+    #    constant_linear_bias(bias_params[2]),
+    #]
+
+    bias = w_w_quadratic_bias(bias_params[0])
 
     cosmo_probes = [probes.NumberCounts(redshift_distributions, bias),
                     modified_probes.WeakLensing([surface_of_last_scattering])]
@@ -164,11 +167,13 @@ def cl_data_CMB(cosmo, nz_params, bias_params, ell, f_sky, ndens, seed, red=1.0)
    #     increasing_bias(bias_params[2]),
    # ]
 
-    bias = [
-        constant_linear_bias(bias_params[0]),
-        constant_linear_bias(bias_params[1]),
-        constant_linear_bias(bias_params[2]),
-    ]
+    #bias = [
+    #    constant_linear_bias(bias_params[0]),
+    #    constant_linear_bias(bias_params[1]),
+    #    constant_linear_bias(bias_params[2]),
+    #]
+
+    bias = w_w_quadratic_bias(bias_params[0])
 
     cosmo_probes = [probes.NumberCounts(redshift_distributions, bias),
                     modified_probes.WeakLensing([surface_of_last_scattering])]
@@ -223,11 +228,14 @@ def cl_data_CMB_nagaraj(cosmo, nz_params, bias_params, ell, f_sky, ndens, seed, 
    #     increasing_bias(bias_params[2]),
    # ]
 
-    bias = [
-        constant_linear_bias(bias_params[0]),
-        constant_linear_bias(bias_params[1]),
-        constant_linear_bias(bias_params[2]),
-    ]
+    #bias = [
+    #    constant_linear_bias(bias_params[0]),
+    #    constant_linear_bias(bias_params[1]),
+    #    constant_linear_bias(bias_params[2]),
+    #]
+
+    bias = w_w_quadratic_bias(bias_params[0])
+
     cosmo_probes = [probes.NumberCounts(redshift_distributions, bias),
                     modified_probes.WeakLensing([surface_of_last_scattering])]
 

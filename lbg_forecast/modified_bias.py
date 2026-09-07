@@ -85,3 +85,24 @@ class des_y1_ia_bias(container):
     def __call__(self, cosmo, z):
         A, eta, z0 = self.params
         return A * ((1.0 + z) / (1.0 + z0)) ** eta
+
+
+@register_pytree_node_class
+class w_w_quadratic_bias(container):
+    """
+    
+    http://arxiv.org/abs/1904.13378 2.5.1
+
+    Parameters:
+    -----------
+    cosmo: cosmology
+    b0: redshift independent bias value at z=4, m=25, fiducial value 4.8
+    
+    """
+    
+    def __call__(self, cosmo, z):
+        b0 = self.params[0]
+        # clamp above z=8: the n(z) grid ends at ~7, but the Limber integral
+        # runs to z=2000 (CMB lensing), where (1+z)^2 would blow up
+        z = np.minimum(z, 8.0)
+        return b0 * (0.023*(1+z) + 0.035*(1+z)**2)

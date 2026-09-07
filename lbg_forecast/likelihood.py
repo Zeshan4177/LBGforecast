@@ -86,16 +86,21 @@ class Likelihood:
         if(override_seed is not None):
             seed = override_seed
 
-        self._b_lbg_u = 3.0#/(1+3)
-        self._b_lbg_g = 4.0#/(1+4)
-        self._b_lbg_r = 5.0#/(1+5)
+        #self._b_lbg_u = 3.0#/(1+3)
+        #self._b_lbg_g = 4.0#/(1+4)
+        #self._b_lbg_r = 5.0#/(1+5)
 
         self.b_lbg = 3.585/(1+3.585)
 
-        self._bias_params = jnp.array([self._b_lbg_u,
-                                       self._b_lbg_g,
-                                       self._b_lbg_r,
-        ])
+        # W&W shape is normalised to 1 at z=4, so this is the bias at z=4
+        self._b0_lbg = 4.8
+
+        #self._bias_params = jnp.array([self._b_lbg_u,
+        #                               self._b_lbg_g,
+        #                               self._b_lbg_r,
+        #])
+
+        self._bias_params = jnp.array([self._b0_lbg])
 
         self.nz_params_mean = jnp.hstack(
             (self._mean_vec_u, self._mean_vec_g, self._mean_vec_r)
@@ -194,7 +199,10 @@ class Likelihood:
         return cl_theory_CMB(cosmo_obj, nz_params, bias_params, self._ell, self.ndens, red=1.0)
     
     def mu_vec(self, params, red=1.0):
-        """Reduced theory vector for fisher forecast"""
+        """Reduced theory vector for fisher forecast
+
+        params = [sigma8, Omega_c, Omega_b, h, n_s, b0]
+        """
 
         cosmo_obj = jc.Planck15(sigma8=params[0],
                                 Omega_c=params[1],
@@ -204,8 +212,8 @@ class Likelihood:
 
         bias_params = self._bias_params
         bias_params = bias_params.at[0].set(params[5])
-        bias_params = bias_params.at[1].set(params[6])
-        bias_params = bias_params.at[2].set(params[7])
+        #bias_params = bias_params.at[1].set(params[6])
+        #bias_params = bias_params.at[2].set(params[7])
         nz_params = self.nz_params_mean
     
         return cl_theory_CMB(cosmo_obj, nz_params, bias_params, self._ell, self.ndens, red=red)
@@ -229,7 +237,10 @@ class Likelihood:
         return cl_theory_CMB(cosmo_obj, nz_params, bias_params, self._ell, self.ndens, red=1.0)
     
     def mu_vec_deriv(self, params, red=1.0):
-        """Reduced theory vector for fisher forecast"""
+        """Reduced theory vector for fisher forecast
+
+        params = [Omega_m, S8, Omega_b, h, n_s, b0]
+        """
 
         o_m = params[0]
         s8 = params[1]
@@ -242,8 +253,8 @@ class Likelihood:
 
         bias_params = self._bias_params
         bias_params = bias_params.at[0].set(params[5])
-        bias_params = bias_params.at[1].set(params[6])
-        bias_params = bias_params.at[2].set(params[7])
+        #bias_params = bias_params.at[1].set(params[6])
+        #bias_params = bias_params.at[2].set(params[7])
         nz_params = self.nz_params_mean
     
         return cl_theory_CMB(cosmo_obj, nz_params, bias_params, self._ell, self.ndens, red=red)
@@ -349,7 +360,7 @@ class Likelihood:
         nz_params = self.nz_params_mean
         cosmo = self._cosmo_fid
         bias_params = self._bias_params
-        theory_cl = cl_theory_CMB(cosmo, nz_params, bias_params, self._ell, self.ndens)
+        theory_cl = cl_theory_CMB(cosmo, nz_params, bias_params, self._ell, self.ndens, red=1.0)
 
         # plot together
         compare_cls(data_cl, theory_cl, self._ell, figure_size=(15, 10), fontsize=18, ncls=4)
