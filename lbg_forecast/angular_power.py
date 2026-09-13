@@ -295,6 +295,90 @@ def plot_ncls(cls_theory, ell, figure_size, fontsize, ncls):
         j += 1
 
 
+def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsize,
+                   red=1.0, z_kappa=2.0):
+    """
+    Plots the effective tracer power spectra b_X b_Y P_m(k) for every tracer
+    pair, in the same order and triangle layout as the angular cls.
+    Each galaxy tracer's bias is the n(z)-weighted bias, b_eff = int n_X(z) b(z) dz,
+    which is what the Limber integral effectively uses.
+    --------------------------------------------------------------------
+    Parameters:
+    cosmo - JAX-COSMO cosmology object containing cosmological parameters
+    nz_params - PCA coefficients for u, g, r dropout redshift distributions
+    bias_params - bias parameters (b0 of the Wilson & White quadratic bias)
+    k - wavenumbers [h/Mpc] to plot over
+    ndens - number densities of u, g, r dropouts
+    figure_size, fontsize - plotting
+    red - interloper reduction factor
+    z_kappa - effective redshift used for the CMB lensing tracer (no n(z))
+    ----------------------------------------------------------------------
+    Returns:
+    fig, axes, b_eff, z_eff
+
+    """
+    n = NPCA
+
+    surface_of_last_scattering = delta_nz(1100., gals_per_arcmin2 = 1e20, zmax=2000.)
+    red = jnp.array([red])
+    nz_u = u_dropout(nz_params[:n], gals_per_arcmin2=ndens[0], red=red)
+    nz_g = g_dropout(nz_params[n : 2 * n], gals_per_arcmin2=ndens[1], red=red)
+    nz_r = r_dropout(nz_params[2 * n : 3 * n], gals_per_arcmin2=ndens[2], red=red)
+
+    redshift_distributions = [nz_u, nz_g, nz_r]
+    bias = w_w_quadratic_bias(bias_params[0])
+
+    cosmo_probes = [probes.NumberCounts(redshift_distributions, bias),
+                    modified_probes.WeakLensing([surface_of_last_scattering])]
+    cl_index = modified_angular_cl._get_cl_ordering(cosmo_probes)
+
+    # effective bias and redshift of each galaxy tracer, weighted by its n(z)
+    z = z_space()
+    b_eff = []
+    z_eff = []
+    for nz in redshift_distributions:
+        nz_z = nz(z)
+        nz_z = nz_z / jnp.trapezoid(nz_z, z)
+        b_eff.append(jnp.trapezoid(nz_z * bias(cosmo, z), z))
+        z_eff.append(jnp.trapezoid(z * nz_z, z))
+
+    # CMB lensing has no bias
+    b_eff.append(1.0)
+    z_eff.append(z_kappa)
+
+    b_eff = jnp.array(b_eff)
+    z_eff = jnp.array(z_eff)
+
+    names = ["u", "g", "r", r"$\kappa$"]
+    ntracers = len(names)
+
+    fig, axes = plt.subplots(ntracers, ntracers, figsize=figure_size)
+    for i in range(ntracers):
+        for j in range(i + 1, ntracers):
+            axes[i][j].set_visible(False)
+
+    for i, j in cl_index:
+        ax = axes[j][i]
+        z_pair = 0.5 * (z_eff[i] + z_eff[j])
+        ax.plot(k, b_eff[i] * b_eff[j] * pk(cosmo, k, z_pair))
+        # scales probed by the ell = 200-1000 cls at z ~ 3-5
+        ax.axvspan(0.04, 0.2, color="grey", alpha=0.15)
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_title(names[i] + r"$\times$" + names[j], fontsize=fontsize)
+
+    for i in range(ntracers):
+        axes[i][0].set_ylabel("$P_{XY}(k)$", fontsize=fontsize)
+        axes[ntracers - 1][i].set_xlabel("$k$ [h/Mpc]", fontsize=fontsize)
+
+    fig.tight_layout()
+
+    for name, b, zz in zip(names, b_eff, z_eff):
+        print(name, "b_eff = %.3f, z_eff = %.3f" % (b, zz))
+
+    return fig, axes, b_eff, z_eff
+
+
 def compare_cls(cl1, cl2, ell, figure_size, fontsize, ncls):
     """
     Plots two sets of cls on one plot in order to compare
