@@ -106,3 +106,24 @@ class w_w_quadratic_bias(container):
         # runs to z=2000 (CMB lensing), where (1+z)^2 would blow up
         z = np.minimum(z, 8.0)
         return b0 * (0.023*(1+z) + 0.035*(1+z)**2)
+
+    """Ignore this function, it doesn't make sense"""
+
+
+@register_pytree_node_class
+class increasing_bias_I(container):
+    """
+    Class representing a linear bias
+
+    Parameters:
+    -----------
+    b_0: LBG bias at z_eff
+    b_I: interloper bias, clamped at z<1.5
+    z_eff: effective redshift of the sample (pivot for b_0)
+    """
+
+    def __call__(self, cosmo, z):
+        b_0 = self.params[0]
+        b_I = self.params[1]
+        z_eff = self.params[2]
+        return np.where(z < 1.5, b_I, b_0 * (1 + z) / (1 + z_eff))

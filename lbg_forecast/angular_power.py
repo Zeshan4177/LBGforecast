@@ -29,6 +29,7 @@ from lbg_forecast.modified_bias import custom_bias
 from lbg_forecast.modified_bias import constant_linear_bias
 from lbg_forecast.modified_bias import increasing_bias
 from lbg_forecast.modified_bias import w_w_quadratic_bias
+from lbg_forecast.modified_bias import increasing_bias_I
 
 from lbg_forecast.modified_redshift import u_dropout
 from lbg_forecast.modified_redshift import g_dropout
@@ -80,6 +81,39 @@ def z_space():
     return jnp.arange(0, 7, 0.01)
 
 
+def z_eff(nz_params, ndens, red=1.0, z_min=1.5):
+    """
+    Effective redshift of each dropout sample, excluding interlopers:
+    z_eff = int_{z_min} z n(z)^2 dz / int_{z_min} n(z)^2 dz
+    --------------------------------------------------------------------
+    Parameters:
+    nz_params - PCA coefficients for u, g, r dropout redshift distributions
+    ndens - number densities of u, g, r dropouts
+    red - interloper reduction factor
+    z_min - lower integration limit (interloper cut)
+    ----------------------------------------------------------------------
+    Returns:
+    jnp.array([z_eff_u, z_eff_g, z_eff_r])
+
+    """
+    n = NPCA
+
+    red = jnp.array([red])
+    nz_u = u_dropout(nz_params[:n], gals_per_arcmin2=ndens[0], red=red)
+    nz_g = g_dropout(nz_params[n : 2 * n], gals_per_arcmin2=ndens[1], red=red)
+    nz_r = r_dropout(nz_params[2 * n : 3 * n], gals_per_arcmin2=ndens[2], red=red)
+
+    z = z_space()
+    z = z[z >= z_min]
+
+    z_effs = []
+    for nz in [nz_u, nz_g, nz_r]:
+        nz2 = nz(z)**2
+        z_effs.append(jnp.trapezoid(z * nz2, z) / jnp.trapezoid(nz2, z))
+
+    return jnp.array(z_effs)
+
+
 @jit
 def cl_theory_CMB(cosmo, nz_params, bias_params, ell, ndens, red):
     """
@@ -120,7 +154,13 @@ def cl_theory_CMB(cosmo, nz_params, bias_params, ell, ndens, red):
     #    constant_linear_bias(bias_params[2]),
     #]
 
-    bias = w_w_quadratic_bias(bias_params[0])
+    # bias_params = [b_0_u, b_0_g, b_0_r, b_I, z_eff_u, z_eff_g, z_eff_r],
+    # one interloper bias shared by all samples
+    bias = [
+        increasing_bias_I(bias_params[0], bias_params[3], bias_params[4]),
+        increasing_bias_I(bias_params[1], bias_params[3], bias_params[5]),
+        increasing_bias_I(bias_params[2], bias_params[3], bias_params[6]),
+    ]
 
     cosmo_probes = [probes.NumberCounts(redshift_distributions, bias),
                     modified_probes.WeakLensing([surface_of_last_scattering])]
@@ -173,7 +213,13 @@ def cl_data_CMB(cosmo, nz_params, bias_params, ell, f_sky, ndens, seed, red=1.0)
     #    constant_linear_bias(bias_params[2]),
     #]
 
-    bias = w_w_quadratic_bias(bias_params[0])
+    # bias_params = [b_0_u, b_0_g, b_0_r, b_I, z_eff_u, z_eff_g, z_eff_r],
+    # one interloper bias shared by all samples
+    bias = [
+        increasing_bias_I(bias_params[0], bias_params[3], bias_params[4]),
+        increasing_bias_I(bias_params[1], bias_params[3], bias_params[5]),
+        increasing_bias_I(bias_params[2], bias_params[3], bias_params[6]),
+    ]
 
     cosmo_probes = [probes.NumberCounts(redshift_distributions, bias),
                     modified_probes.WeakLensing([surface_of_last_scattering])]
@@ -234,8 +280,13 @@ def cl_data_CMB_nagaraj(cosmo, nz_params, bias_params, ell, f_sky, ndens, seed, 
     #    constant_linear_bias(bias_params[2]),
     #]
 
-    bias = w_w_quadratic_bias(bias_params[0])
-
+    # bias_params = [b_0_u, b_0_g, b_0_r, b_I, z_eff_u, z_eff_g, z_eff_r],
+    # one interloper bias shared by all samples
+    bias = [
+        increasing_bias_I(bias_params[0], bias_params[3], bias_params[4]),
+        increasing_bias_I(bias_params[1], bias_params[3], bias_params[5]),
+        increasing_bias_I(bias_params[2], bias_params[3], bias_params[6]),
+    ]
     cosmo_probes = [probes.NumberCounts(redshift_distributions, bias),
                     modified_probes.WeakLensing([surface_of_last_scattering])]
 
@@ -306,7 +357,7 @@ def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsiz
     Parameters:
     cosmo - JAX-COSMO cosmology object containing cosmological parameters
     nz_params - PCA coefficients for u, g, r dropout redshift distributions
-    bias_params - bias parameters (b0 of the Wilson & White quadratic bias)
+    bias_params - bias parameters [b_0_u, b_0_g, b_0_r, b_I, z_eff_u, z_eff_g, z_eff_r]
     k - wavenumbers [h/Mpc] to plot over
     ndens - number densities of u, g, r dropouts
     figure_size, fontsize - plotting
@@ -326,7 +377,11 @@ def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsiz
     nz_r = r_dropout(nz_params[2 * n : 3 * n], gals_per_arcmin2=ndens[2], red=red)
 
     redshift_distributions = [nz_u, nz_g, nz_r]
-    bias = w_w_quadratic_bias(bias_params[0])
+    bias = [
+        increasing_bias_I(bias_params[0], bias_params[3], bias_params[4]),
+        increasing_bias_I(bias_params[1], bias_params[3], bias_params[5]),
+        increasing_bias_I(bias_params[2], bias_params[3], bias_params[6]),
+    ]
 
     cosmo_probes = [probes.NumberCounts(redshift_distributions, bias),
                     modified_probes.WeakLensing([surface_of_last_scattering])]
@@ -336,10 +391,10 @@ def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsiz
     z = z_space()
     b_eff = []
     z_eff = []
-    for nz in redshift_distributions:
+    for nz, b in zip(redshift_distributions, bias):
         nz_z = nz(z)
         nz_z = nz_z / jnp.trapezoid(nz_z, z)
-        b_eff.append(jnp.trapezoid(nz_z * bias(cosmo, z), z))
+        b_eff.append(jnp.trapezoid(nz_z * b(cosmo, z), z))
         z_eff.append(jnp.trapezoid(z * nz_z, z))
 
     # CMB lensing has no bias
