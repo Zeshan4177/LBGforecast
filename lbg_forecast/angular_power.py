@@ -352,7 +352,8 @@ def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsiz
     Plots the effective tracer power spectra b_X b_Y P_m(k) for every tracer
     pair, in the same order and triangle layout as the angular cls.
     Each galaxy tracer's bias is the n(z)-weighted bias, b_eff = int n_X(z) b(z) dz,
-    which is what the Limber integral effectively uses.
+    which is what the Limber integral effectively uses. Each galaxy tracer's effective
+    redshift is z_eff = int_{1.5} z n(z)^2 dz / int_{1.5} n(z)^2 dz (see z_eff()).
     --------------------------------------------------------------------
     Parameters:
     cosmo - JAX-COSMO cosmology object containing cosmological parameters
@@ -369,6 +370,9 @@ def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsiz
 
     """
     n = NPCA
+
+    # effective redshift of each galaxy tracer: n(z)^2 weighted, z >= 1.5 (excludes interlopers)
+    z_effs = list(z_eff(nz_params, ndens, red=red))
 
     surface_of_last_scattering = delta_nz(1100., gals_per_arcmin2 = 1e20, zmax=2000.)
     red = jnp.array([red])
@@ -387,22 +391,20 @@ def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsiz
                     modified_probes.WeakLensing([surface_of_last_scattering])]
     cl_index = modified_angular_cl._get_cl_ordering(cosmo_probes)
 
-    # effective bias and redshift of each galaxy tracer, weighted by its n(z)
+    # effective bias of each galaxy tracer, weighted by its full n(z) (interlopers included)
     z = z_space()
     b_eff = []
-    z_eff = []
     for nz, b in zip(redshift_distributions, bias):
         nz_z = nz(z)
         nz_z = nz_z / jnp.trapezoid(nz_z, z)
         b_eff.append(jnp.trapezoid(nz_z * b(cosmo, z), z))
-        z_eff.append(jnp.trapezoid(z * nz_z, z))
 
     # CMB lensing has no bias
     b_eff.append(1.0)
-    z_eff.append(z_kappa)
+    z_effs.append(z_kappa)
 
     b_eff = jnp.array(b_eff)
-    z_eff = jnp.array(z_eff)
+    z_effs = jnp.array(z_effs)
 
     names = ["u", "g", "r", r"$\kappa$"]
     ntracers = len(names)
@@ -414,7 +416,7 @@ def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsiz
 
     for i, j in cl_index:
         ax = axes[j][i]
-        z_pair = 0.5 * (z_eff[i] + z_eff[j])
+        z_pair = 0.5 * (z_effs[i] + z_effs[j])
         ax.plot(k, b_eff[i] * b_eff[j] * pk(cosmo, k, z_pair))
         # scales probed by the ell = 200-1000 cls at z ~ 3-5
         ax.axvspan(0.04, 0.2, color="grey", alpha=0.15)
@@ -428,10 +430,10 @@ def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsiz
 
     fig.tight_layout()
 
-    for name, b, zz in zip(names, b_eff, z_eff):
+    for name, b, zz in zip(names, b_eff, z_effs):
         print(name, "b_eff = %.3f, z_eff = %.3f" % (b, zz))
 
-    return fig, axes, b_eff, z_eff
+    return fig, axes, b_eff, z_effs
 
 
 def compare_cls(cl1, cl2, ell, figure_size, fontsize, ncls):
