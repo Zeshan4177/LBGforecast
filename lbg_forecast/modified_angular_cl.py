@@ -84,12 +84,12 @@ def angular_cl(
             # Define an ordering for the blocks of the signal vector
             cl_index = np.array(_get_cl_ordering(probes))
 
-            # Compute all combinations of tracers
-            def combine_kernels(inds):
-                return kernels[inds[0]] * kernels[inds[1]]
-
+            # Compute all combinations of tracers, by indexing rather than lax.map:
+            # the PNG term makes the density kernel ell dependent, and a lax.map (scan)
+            # output cannot be fused, which costs an extra [nparams, nell, ncls, na]
+            # buffer under jacfwd
             # Now kernels has shape [ncls, na]
-            kernels = lax.map(combine_kernels, cl_index)
+            kernels = kernels[cl_index[:, 0]] * kernels[cl_index[:, 1]]
 
             result = pk * kernels * bkgrd.dchioverda(cosmo, a) / np.clip(chi**2, 1.0)
 

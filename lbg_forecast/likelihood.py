@@ -27,6 +27,38 @@ from lbg_forecast.modified_likelihood import marginalised_log_likelihood
 import lbg_forecast.utils as utils
 
 
+@jax.jit
+def _nz_jvp_chunk(cosmo, nz_params, bias_params, ell, ndens, red, tangents):
+    """Derivative of cl_theory_CMB along each row of tangents, shape [ntangents, ndata]"""
+
+    def cl_nz(nz):
+        return cl_theory_CMB(cosmo, nz, bias_params, ell, ndens, red)
+
+    return jax.vmap(lambda t: jax.jvp(cl_nz, (nz_params,), (t,))[1])(tangents)
+
+
+def nz_jacobian(cosmo, nz_params, bias_params, ell, ndens, red, chunk_size=5):
+    """
+    Jacobian of cl_theory_CMB w.r.t. nz_params, same as jacfwd(cl_theory_CMB, argnums=1),
+    but only chunk_size tangent directions are pushed through the cls at a time.
+    The PNG term makes the density kernel ell dependent, so jacfwd over all the
+    PCA coefficients at once needs several GB of GPU memory.
+    """
+    n = nz_params.shape[0]
+    # pad the basis with zero tangents so every chunk has the same shape (one compilation)
+    n_chunks = -(-n // chunk_size)
+    basis = jnp.zeros((n_chunks * chunk_size, n), dtype=nz_params.dtype)
+    basis = basis.at[jnp.arange(n), jnp.arange(n)].set(1.0)
+
+    columns = [
+        _nz_jvp_chunk(cosmo, nz_params, bias_params, ell, ndens, red,
+                      basis[i * chunk_size : (i + 1) * chunk_size])
+        for i in range(n_chunks)
+    ]
+    # jacobian is [ndata, nparams]
+    return jnp.concatenate(columns, axis=0)[:n].T
+
+
 class Likelihood:
     def __init__(self, path, n_override=None, mismatch_nag=None, override_seed=None, no_noise=False):
         """
@@ -113,18 +145,23 @@ class Likelihood:
         # increasing_bias_I: b(z) = b_0*(1+z)/(1+z_eff) for LBGs, b_I for interlopers (z<1.5)
         # b_0 is the bias at the effective redshift of the u, g, r dropouts,
         # z_eff is fixed at the fiducial (mean) n(z) and is not varied
-        self._z_eff = z_eff(self.nz_params_mean, self.ndens)
+        #self._z_eff = z_eff(self.nz_params_mean, self.ndens)
+        self._z_eff_u, self._z_eff_g, self._z_eff_r = z_eff(self.nz_params_mean, self.ndens)
         self._b_lbg_u = 3.0
         self._b_lbg_g = 4.0
         self._b_lbg_r = 5.0
         self._b_int = 1.0
+        self._f_NL = 0.0
 
-        # [b_0_u, b_0_g, b_0_r, b_I, z_eff_u, z_eff_g, z_eff_r], only the first 4 are free
+        # [b_0_u, b_0_g, b_0_r, b_I, z_eff_u, z_eff_g, z_eff_r, f_NL], the z_eff are not free
         self._bias_params = jnp.array([self._b_lbg_u,
                                        self._b_lbg_g,
                                        self._b_lbg_r,
                                        self._b_int,
-                                       *self._z_eff,
+                                       self._z_eff_u,
+                                       self._z_eff_g,
+                                       self._z_eff_r,
+                                       self._f_NL
         ])
 
         self._cosmo_fid = define_cosmo()
@@ -166,7 +203,7 @@ class Likelihood:
         self.det_C = jnp.linalg.det(self.C)
 
         # jacobian #need to change if you want uncertanties with nagaraj
-        self._jacobian = jax.jit(jacfwd(cl_theory_CMB, argnums=1))
+        self._jacobian = nz_jacobian
         self.T = self._jacobian(self._cosmo_fid, self.nz_params_mean,
                                  self._bias_params, self._ell, self.ndens, 1.0)
         
@@ -205,7 +242,7 @@ class Likelihood:
     def mu_vec(self, params, red=1.0):
         """Reduced theory vector for fisher forecast
 
-        params = [sigma8, Omega_c, Omega_b, h, n_s, b_0_u, b_0_g, b_0_r, b_I]
+        params = [sigma8, Omega_c, Omega_b, h, n_s, b_0_u, b_0_g, b_0_r, b_I, f_NL]
         """
 
         cosmo_obj = jc.Planck15(sigma8=params[0],
@@ -219,6 +256,7 @@ class Likelihood:
         bias_params = bias_params.at[1].set(params[6])
         bias_params = bias_params.at[2].set(params[7])
         bias_params = bias_params.at[3].set(params[8])
+        bias_params = bias_params.at[7].set(params[9])
         nz_params = self.nz_params_mean
     
         return cl_theory_CMB(cosmo_obj, nz_params, bias_params, self._ell, self.ndens, red=red)
@@ -238,6 +276,7 @@ class Likelihood:
         bias_params = bias_params.at[1].set(params[6])
         bias_params = bias_params.at[2].set(params[7])
         bias_params = bias_params.at[3].set(params[8])
+        bias_params = bias_params.at[7].set(params[9])
         nz_params = self.nz_params_mean_pop
     
         return cl_theory_CMB(cosmo_obj, nz_params, bias_params, self._ell, self.ndens, red=1.0)
@@ -245,7 +284,7 @@ class Likelihood:
     def mu_vec_deriv(self, params, red=1.0):
         """Reduced theory vector for fisher forecast
 
-        params = [Omega_m, S8, Omega_b, h, n_s, b_0_u, b_0_g, b_0_r, b_I]
+        params = [Omega_m, S8, Omega_b, h, n_s, b_0_u, b_0_g, b_0_r, b_I, f_NL]
         """
 
         o_m = params[0]
@@ -262,6 +301,7 @@ class Likelihood:
         bias_params = bias_params.at[1].set(params[6])
         bias_params = bias_params.at[2].set(params[7])
         bias_params = bias_params.at[3].set(params[8])
+        bias_params = bias_params.at[7].set(params[9])
         nz_params = self.nz_params_mean
     
         return cl_theory_CMB(cosmo_obj, nz_params, bias_params, self._ell, self.ndens, red=red)
@@ -280,6 +320,7 @@ class Likelihood:
         bias_params = bias_params.at[1].set(params[6])
         bias_params = bias_params.at[2].set(params[7])
         bias_params = bias_params.at[3].set(params[8])
+        bias_params = bias_params.at[7].set(params[9])
 
         nz_params = self.nz_params_mean
 

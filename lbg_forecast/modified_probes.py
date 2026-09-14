@@ -7,6 +7,7 @@ from jax.tree_util import register_pytree_node_class
 import jax_cosmo.background as bkgrd
 import jax_cosmo.constants as const
 import jax_cosmo.redshift as rds
+import jax_cosmo.transfer as tklib
 from jax_cosmo.jax_utils import container
 from jax_cosmo.scipy.integrate import simps
 from jax_cosmo.utils import a2z
@@ -77,8 +78,33 @@ def weak_lensing_kernel(cosmo, pzs, z, ell):
     return constant_factor * radial_kernel
 
 
+def png_bias(cosmo, b, k, z, f_NL):
+    """
+    Scale-dependent bias due to local primordial non-Gaussianity
+    Dalal et al. (2008), arXiv: 0710.4560
+
+    b_PNG = 2 f_NL (b - p) delta_c / alpha(k, z),
+    alpha = 2 c^2 k^2 T(k) D(z) / (3 Omega_m H0^2)
+
+    b, k and z must broadcast together, k in h/Mpc
+    """
+    # Eisenstein & Hu transfer function, normalised to T(k->0) = 1
+    T = tklib.Eisenstein_Hu(cosmo, k)
+    # jax_cosmo normalises D(z=0) = 1, the formula needs D(a) = a in matter domination
+    a_early = 1e-2
+    D = bkgrd.growth_factor(cosmo, z2a(z)) * a_early / bkgrd.growth_factor(
+        cosmo, np.atleast_1d(a_early)
+    )
+    Omega_m = cosmo.Omega_c + cosmo.Omega_b
+    alpha = 2.0 * const.c**2 * k**2 * T * D / (3.0 * Omega_m * const.H0**2)
+    # universal mass function, p = 1
+    delta_c = 1.686
+    p = 1.0
+    return 2.0 * f_NL * (b - p) * delta_c / alpha
+
+
 @jit
-def density_kernel(cosmo, pzs, bias, z, ell):
+def density_kernel(cosmo, pzs, bias, z, ell, f_NL=0.0):
     """
     Computes the number counts density kernel
     """
@@ -94,7 +120,13 @@ def density_kernel(cosmo, pzs, bias, z, ell):
         b = np.stack([b(cosmo, z) for b in bias], axis=0)
     else:
         b = bias(cosmo, z)
-    radial_kernel = dndz * b * bkgrd.H(cosmo, z2a(z))
+
+    # Limber: k = (ell + 1/2) / chi(z), in h/Mpc
+    chi = bkgrd.radial_comoving_distance(cosmo, z2a(z))
+    k = (ell + 0.5) / np.clip(chi, 1.0)
+    b_PNG = png_bias(cosmo, b, k, z, f_NL)
+
+    radial_kernel = dndz * (b + b_PNG) * bkgrd.H(cosmo, z2a(z))
     # Normalization,
     constant_factor = 1.0
     # Ell dependent factor
@@ -239,9 +271,10 @@ class NumberCounts(container):
     has_rsd....
     """
 
-    def __init__(self, redshift_bins, bias, has_rsd=False, **kwargs):
+    def __init__(self, redshift_bins, bias, f_NL=0.0, has_rsd=False, **kwargs):
+        # f_NL is passed as a parameter (not a config kwarg) so it is traced by jax
         super(NumberCounts, self).__init__(
-            redshift_bins, bias, has_rsd=has_rsd, **kwargs
+            redshift_bins, bias, f_NL, has_rsd=has_rsd, **kwargs
         )
 
     @property
@@ -269,9 +302,9 @@ class NumberCounts(container):
         """
         z = np.atleast_1d(z)
         # Extract parameters
-        pzs, bias = self.params
+        pzs, bias, f_NL = self.params
         # Retrieve density kernel
-        kernel = density_kernel(cosmo, pzs, bias, z, ell)
+        kernel = density_kernel(cosmo, pzs, bias, z, ell, f_NL)
         return kernel
 
     def noise(self):

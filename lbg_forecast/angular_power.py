@@ -154,7 +154,7 @@ def cl_theory_CMB(cosmo, nz_params, bias_params, ell, ndens, red):
     #    constant_linear_bias(bias_params[2]),
     #]
 
-    # bias_params = [b_0_u, b_0_g, b_0_r, b_I, z_eff_u, z_eff_g, z_eff_r],
+    # bias_params = [b_0_u, b_0_g, b_0_r, b_I, z_eff_u, z_eff_g, z_eff_r, f_NL],
     # one interloper bias shared by all samples
     bias = [
         increasing_bias_I(bias_params[0], bias_params[3], bias_params[4]),
@@ -162,7 +162,7 @@ def cl_theory_CMB(cosmo, nz_params, bias_params, ell, ndens, red):
         increasing_bias_I(bias_params[2], bias_params[3], bias_params[6]),
     ]
 
-    cosmo_probes = [probes.NumberCounts(redshift_distributions, bias),
+    cosmo_probes = [modified_probes.NumberCounts(redshift_distributions, bias, bias_params[7]),
                     modified_probes.WeakLensing([surface_of_last_scattering])]
 
     signal = modified_angular_cl.angular_cl(cosmo, ell, cosmo_probes)
@@ -213,7 +213,7 @@ def cl_data_CMB(cosmo, nz_params, bias_params, ell, f_sky, ndens, seed, red=1.0)
     #    constant_linear_bias(bias_params[2]),
     #]
 
-    # bias_params = [b_0_u, b_0_g, b_0_r, b_I, z_eff_u, z_eff_g, z_eff_r],
+    # bias_params = [b_0_u, b_0_g, b_0_r, b_I, z_eff_u, z_eff_g, z_eff_r, f_NL],
     # one interloper bias shared by all samples
     bias = [
         increasing_bias_I(bias_params[0], bias_params[3], bias_params[4]),
@@ -221,7 +221,7 @@ def cl_data_CMB(cosmo, nz_params, bias_params, ell, f_sky, ndens, seed, red=1.0)
         increasing_bias_I(bias_params[2], bias_params[3], bias_params[6]),
     ]
 
-    cosmo_probes = [probes.NumberCounts(redshift_distributions, bias),
+    cosmo_probes = [modified_probes.NumberCounts(redshift_distributions, bias, bias_params[7]),
                     modified_probes.WeakLensing([surface_of_last_scattering])]
 
     signal, cov = gaussian_cl_covariance_and_mean(
@@ -280,14 +280,14 @@ def cl_data_CMB_nagaraj(cosmo, nz_params, bias_params, ell, f_sky, ndens, seed, 
     #    constant_linear_bias(bias_params[2]),
     #]
 
-    # bias_params = [b_0_u, b_0_g, b_0_r, b_I, z_eff_u, z_eff_g, z_eff_r],
+    # bias_params = [b_0_u, b_0_g, b_0_r, b_I, z_eff_u, z_eff_g, z_eff_r, f_NL],
     # one interloper bias shared by all samples
     bias = [
         increasing_bias_I(bias_params[0], bias_params[3], bias_params[4]),
         increasing_bias_I(bias_params[1], bias_params[3], bias_params[5]),
         increasing_bias_I(bias_params[2], bias_params[3], bias_params[6]),
     ]
-    cosmo_probes = [probes.NumberCounts(redshift_distributions, bias),
+    cosmo_probes = [modified_probes.NumberCounts(redshift_distributions, bias, bias_params[7]),
                     modified_probes.WeakLensing([surface_of_last_scattering])]
 
     signal, cov = gaussian_cl_covariance_and_mean(
@@ -347,29 +347,37 @@ def plot_ncls(cls_theory, ell, figure_size, fontsize, ncls):
 
 
 def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsize,
-                   red=1.0, z_kappa=2.0):
+                   red=1.0, z_kappa=2.0, f_NL=None):
     """
     Plots the effective tracer power spectra b_X b_Y P_m(k) for every tracer
     pair, in the same order and triangle layout as the angular cls.
     Each galaxy tracer's bias is the n(z)-weighted bias, b_eff = int n_X(z) b(z) dz,
     which is what the Limber integral effectively uses. Each galaxy tracer's effective
     redshift is z_eff = int_{1.5} z n(z)^2 dz / int_{1.5} n(z)^2 dz (see z_eff()).
+    With f_NL != 0 the bias is scale dependent, b_X(k) = int n_X(z) [b(z) + b_PNG(k, z)] dz,
+    and the Gaussian (f_NL = 0) spectra are overplotted dashed. |P_XY(k)| is plotted, since
+    for f_NL < 0 the bias can turn negative on large scales.
     --------------------------------------------------------------------
     Parameters:
     cosmo - JAX-COSMO cosmology object containing cosmological parameters
     nz_params - PCA coefficients for u, g, r dropout redshift distributions
-    bias_params - bias parameters [b_0_u, b_0_g, b_0_r, b_I, z_eff_u, z_eff_g, z_eff_r]
+    bias_params - bias parameters [b_0_u, b_0_g, b_0_r, b_I, z_eff_u, z_eff_g, z_eff_r, f_NL]
     k - wavenumbers [h/Mpc] to plot over
     ndens - number densities of u, g, r dropouts
     figure_size, fontsize - plotting
     red - interloper reduction factor
     z_kappa - effective redshift used for the CMB lensing tracer (no n(z))
+    f_NL - local primordial non-Gaussianity, defaults to bias_params[7]
     ----------------------------------------------------------------------
     Returns:
-    fig, axes, b_eff, z_eff
+    fig, axes, b_eff, z_eff (b_eff is the Gaussian, f_NL = 0, effective bias)
 
     """
     n = NPCA
+
+    if f_NL is None:
+        f_NL = bias_params[7]
+    f_NL = float(f_NL)
 
     # effective redshift of each galaxy tracer: n(z)^2 weighted, z >= 1.5 (excludes interlopers)
     z_effs = list(z_eff(nz_params, ndens, red=red))
@@ -387,23 +395,31 @@ def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsiz
         increasing_bias_I(bias_params[2], bias_params[3], bias_params[6]),
     ]
 
-    cosmo_probes = [probes.NumberCounts(redshift_distributions, bias),
+    cosmo_probes = [modified_probes.NumberCounts(redshift_distributions, bias, f_NL),
                     modified_probes.WeakLensing([surface_of_last_scattering])]
     cl_index = modified_angular_cl._get_cl_ordering(cosmo_probes)
 
     # effective bias of each galaxy tracer, weighted by its full n(z) (interlopers included)
+    # b_eff is the Gaussian part, b_eff_k [nk] adds the n(z)-weighted PNG term
     z = z_space()
     b_eff = []
+    b_eff_k = []
     for nz, b in zip(redshift_distributions, bias):
         nz_z = nz(z)
         nz_z = nz_z / jnp.trapezoid(nz_z, z)
-        b_eff.append(jnp.trapezoid(nz_z * b(cosmo, z), z))
+        b_z = b(cosmo, z)
+        b_eff.append(jnp.trapezoid(nz_z * b_z, z))
+        # b_PNG has shape [nk, nz]
+        b_png = jax.vmap(lambda kk: modified_probes.png_bias(cosmo, b_z, kk, z, f_NL))(k)
+        b_eff_k.append(b_eff[-1] + jnp.trapezoid(nz_z * b_png, z, axis=1))
 
     # CMB lensing has no bias
     b_eff.append(1.0)
+    b_eff_k.append(jnp.ones_like(k))
     z_effs.append(z_kappa)
 
     b_eff = jnp.array(b_eff)
+    b_eff_k = jnp.array(b_eff_k)
     z_effs = jnp.array(z_effs)
 
     names = ["u", "g", "r", r"$\kappa$"]
@@ -417,7 +433,10 @@ def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsiz
     for i, j in cl_index:
         ax = axes[j][i]
         z_pair = 0.5 * (z_effs[i] + z_effs[j])
-        ax.plot(k, b_eff[i] * b_eff[j] * pk(cosmo, k, z_pair))
+        pk_pair = pk(cosmo, k, z_pair)
+        ax.plot(k, jnp.abs(b_eff_k[i] * b_eff_k[j] * pk_pair), label=r"$f_{NL}=%g$" % f_NL)
+        if f_NL != 0.0:
+            ax.plot(k, b_eff[i] * b_eff[j] * pk_pair, ls="--", color="k", label=r"$f_{NL}=0$")
         # scales probed by the ell = 200-1000 cls at z ~ 3-5
         ax.axvspan(0.04, 0.2, color="grey", alpha=0.15)
         ax.set_xscale("log")
@@ -427,6 +446,9 @@ def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsiz
     for i in range(ntracers):
         axes[i][0].set_ylabel("$P_{XY}(k)$", fontsize=fontsize)
         axes[ntracers - 1][i].set_xlabel("$k$ [h/Mpc]", fontsize=fontsize)
+
+    if f_NL != 0.0:
+        axes[0][0].legend(fontsize=fontsize)
 
     fig.tight_layout()
 

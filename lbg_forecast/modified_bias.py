@@ -126,4 +126,7 @@ class increasing_bias_I(container):
         b_0 = self.params[0]
         b_I = self.params[1]
         z_eff = self.params[2]
+        # clamp above z=7: the n(z) grid ends at ~7 but the g dropout n(z) keeps its
+        # last grid value, and the Limber integral runs to z=2000 (CMB lensing)
+        z = np.minimum(z, 7.0)
         return np.where(z < 1.5, b_I, b_0 * (1 + z) / (1 + z_eff))
