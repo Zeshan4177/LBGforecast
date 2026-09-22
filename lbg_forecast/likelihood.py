@@ -163,29 +163,27 @@ class Likelihood:
 
         self.ndens = jnp.array([self.nden_u, self.nden_g, self.nden_r])
 
-        # growth_bias_I: b(z) = b_0*(1+z)/(1+z_eff) for LBGs, C/D(z) for interlopers (z<1.5)
+        # growth_bias_I: b(z) = b_0*(1+z)/(1+z_eff) for LBGs, b_I/D(z) for interlopers (z<1.5)
         # b_0 is the bias at the effective redshift of the u, g, r dropouts,
         # z_eff is fixed at the fiducial (mean) n(z) and is not varied.
-        # C is the constant clustering (Balmer break) interloper amplitude, one per sample:
-        # C = 1.4*D(0.8) = 1.4*(2/3) = 0.933 anchors the interloper bias to b = 1.4 at z = 0.8
+        # b_I is the constant clustering (Balmer break) interloper amplitude. The interlopers
+        # are the same physical population whichever dropout selection they leak into, so a
+        # single b_I is shared by all three samples. The interloper bias is b_I/D(z), so
+        # b_I = 1.4*D(0.8) = 1.4*(2/3) = 0.933 gives an interloper bias of 1.4 at z = 0.8
         #self._z_eff = z_eff(self.nz_params_mean, self.ndens)
         self._z_eff_u, self._z_eff_g, self._z_eff_r = z_eff(self.nz_params_mean, self.ndens)
         self._b_lbg_u = 3.0
         self._b_lbg_g = 4.0
         self._b_lbg_r = 5.0
-        self._C_u = 0.933
-        self._C_g = 0.933
-        self._C_r = 0.933
+        self._b_I = 0.933
         self._f_NL = 0.0
 
-        # [b_0_u, b_0_g, b_0_r, C_u, C_g, C_r, z_eff_u, z_eff_g, z_eff_r, f_NL],
+        # [b_0_u, b_0_g, b_0_r, b_I, z_eff_u, z_eff_g, z_eff_r, f_NL],
         # the z_eff are not free
         self._bias_params = jnp.array([self._b_lbg_u,
                                        self._b_lbg_g,
                                        self._b_lbg_r,
-                                       self._C_u,
-                                       self._C_g,
-                                       self._C_r,
+                                       self._b_I,
                                        self._z_eff_u,
                                        self._z_eff_g,
                                        self._z_eff_r,
@@ -247,7 +245,7 @@ class Likelihood:
         ####
         cosmo_obj = jc.Planck15(sigma8=params[0]*jnp.sqrt(norm_diff))
         bias_params = self._bias_params
-        # only b_0_u is varied; the interloper amplitudes C stay at their fiducial values
+        # only b_0_u is varied; the interloper amplitude b_I stays at its fiducial value
         bias_params = bias_params.at[0].set(params[1])
         nz_params = self.nz_params_mean
     
@@ -261,7 +259,7 @@ class Likelihood:
         ####
         cosmo_obj = jc.Planck15(sigma8=params[0]*jnp.sqrt(norm_diff))
         bias_params = self._bias_params
-        # only b_0_u is varied; the interloper amplitudes C stay at their fiducial values
+        # only b_0_u is varied; the interloper amplitude b_I stays at its fiducial value
         bias_params = bias_params.at[0].set(params[1])
         nz_params = self.nz_params_mean
     
@@ -270,7 +268,7 @@ class Likelihood:
     def mu_vec(self, params, red=1.0):
         """Reduced theory vector for fisher forecast
 
-        params = [sigma8, Omega_c, Omega_b, h, n_s, b_0_u, b_0_g, b_0_r, C_u, C_g, C_r, f_NL]
+        params = [sigma8, Omega_c, Omega_b, h, n_s, b_0_u, b_0_g, b_0_r, b_I, f_NL]
         """
 
         cosmo_obj = jc.Planck15(sigma8=params[0],
@@ -283,10 +281,8 @@ class Likelihood:
         bias_params = bias_params.at[0].set(params[5])    # b_0_u
         bias_params = bias_params.at[1].set(params[6])    # b_0_g
         bias_params = bias_params.at[2].set(params[7])    # b_0_r
-        bias_params = bias_params.at[3].set(params[8])    # C_u
-        bias_params = bias_params.at[4].set(params[9])    # C_g
-        bias_params = bias_params.at[5].set(params[10])   # C_r
-        bias_params = bias_params.at[9].set(params[11])   # f_NL
+        bias_params = bias_params.at[3].set(params[8])    # b_I
+        bias_params = bias_params.at[7].set(params[9])    # f_NL
         nz_params = self.nz_params_mean
     
         return cl_theory_CMB(cosmo_obj, nz_params, bias_params, self._ell, self.ndens, red=red)
@@ -305,10 +301,8 @@ class Likelihood:
         bias_params = bias_params.at[0].set(params[5])    # b_0_u
         bias_params = bias_params.at[1].set(params[6])    # b_0_g
         bias_params = bias_params.at[2].set(params[7])    # b_0_r
-        bias_params = bias_params.at[3].set(params[8])    # C_u
-        bias_params = bias_params.at[4].set(params[9])    # C_g
-        bias_params = bias_params.at[5].set(params[10])   # C_r
-        bias_params = bias_params.at[9].set(params[11])   # f_NL
+        bias_params = bias_params.at[3].set(params[8])    # b_I
+        bias_params = bias_params.at[7].set(params[9])    # f_NL
         nz_params = self.nz_params_mean_pop
     
         return cl_theory_CMB(cosmo_obj, nz_params, bias_params, self._ell, self.ndens, red=1.0)
@@ -316,7 +310,7 @@ class Likelihood:
     def mu_vec_deriv(self, params, red=1.0):
         """Reduced theory vector for fisher forecast
 
-        params = [Omega_m, S8, Omega_b, h, n_s, b_0_u, b_0_g, b_0_r, C_u, C_g, C_r, f_NL]
+        params = [Omega_m, S8, Omega_b, h, n_s, b_0_u, b_0_g, b_0_r, b_I, f_NL]
         """
 
         o_m = params[0]
@@ -332,10 +326,8 @@ class Likelihood:
         bias_params = bias_params.at[0].set(params[5])    # b_0_u
         bias_params = bias_params.at[1].set(params[6])    # b_0_g
         bias_params = bias_params.at[2].set(params[7])    # b_0_r
-        bias_params = bias_params.at[3].set(params[8])    # C_u
-        bias_params = bias_params.at[4].set(params[9])    # C_g
-        bias_params = bias_params.at[5].set(params[10])   # C_r
-        bias_params = bias_params.at[9].set(params[11])   # f_NL
+        bias_params = bias_params.at[3].set(params[8])    # b_I
+        bias_params = bias_params.at[7].set(params[9])    # f_NL
         nz_params = self.nz_params_mean
     
         return cl_theory_CMB(cosmo_obj, nz_params, bias_params, self._ell, self.ndens, red=red)
@@ -353,10 +345,8 @@ class Likelihood:
         bias_params = bias_params.at[0].set(params[5])    # b_0_u
         bias_params = bias_params.at[1].set(params[6])    # b_0_g
         bias_params = bias_params.at[2].set(params[7])    # b_0_r
-        bias_params = bias_params.at[3].set(params[8])    # C_u
-        bias_params = bias_params.at[4].set(params[9])    # C_g
-        bias_params = bias_params.at[5].set(params[10])   # C_r
-        bias_params = bias_params.at[9].set(params[11])   # f_NL
+        bias_params = bias_params.at[3].set(params[8])    # b_I
+        bias_params = bias_params.at[7].set(params[9])    # f_NL
 
         nz_params = self.nz_params_mean
 

@@ -154,15 +154,15 @@ def cl_theory_CMB(cosmo, nz_params, bias_params, ell, ndens, red):
     #    constant_linear_bias(bias_params[2]),
     #]
 
-    # bias_params = [b_0_u, b_0_g, b_0_r, C_u, C_g, C_r, z_eff_u, z_eff_g, z_eff_r, f_NL],
-    # one interloper amplitude C per sample, b_I = C/D(z)
+    # bias_params = [b_0_u, b_0_g, b_0_r, b_I, z_eff_u, z_eff_g, z_eff_r, f_NL],
+    # one interloper amplitude b_I shared by all three samples, interloper bias = b_I/D(z)
     bias = [
-        growth_bias_I(bias_params[0], bias_params[3], bias_params[6]),
-        growth_bias_I(bias_params[1], bias_params[4], bias_params[7]),
-        growth_bias_I(bias_params[2], bias_params[5], bias_params[8]),
+        growth_bias_I(bias_params[0], bias_params[3], bias_params[4]),
+        growth_bias_I(bias_params[1], bias_params[3], bias_params[5]),
+        growth_bias_I(bias_params[2], bias_params[3], bias_params[6]),
     ]
 
-    cosmo_probes = [modified_probes.NumberCounts(redshift_distributions, bias, bias_params[9]),
+    cosmo_probes = [modified_probes.NumberCounts(redshift_distributions, bias, bias_params[7]),
                     modified_probes.WeakLensing([surface_of_last_scattering])]
 
     signal = modified_angular_cl.angular_cl(cosmo, ell, cosmo_probes)
@@ -213,15 +213,15 @@ def cl_data_CMB(cosmo, nz_params, bias_params, ell, f_sky, ndens, seed, red=1.0)
     #    constant_linear_bias(bias_params[2]),
     #]
 
-    # bias_params = [b_0_u, b_0_g, b_0_r, C_u, C_g, C_r, z_eff_u, z_eff_g, z_eff_r, f_NL],
-    # one interloper amplitude C per sample, b_I = C/D(z)
+    # bias_params = [b_0_u, b_0_g, b_0_r, b_I, z_eff_u, z_eff_g, z_eff_r, f_NL],
+    # one interloper amplitude b_I shared by all three samples, interloper bias = b_I/D(z)
     bias = [
-        growth_bias_I(bias_params[0], bias_params[3], bias_params[6]),
-        growth_bias_I(bias_params[1], bias_params[4], bias_params[7]),
-        growth_bias_I(bias_params[2], bias_params[5], bias_params[8]),
+        growth_bias_I(bias_params[0], bias_params[3], bias_params[4]),
+        growth_bias_I(bias_params[1], bias_params[3], bias_params[5]),
+        growth_bias_I(bias_params[2], bias_params[3], bias_params[6]),
     ]
 
-    cosmo_probes = [modified_probes.NumberCounts(redshift_distributions, bias, bias_params[9]),
+    cosmo_probes = [modified_probes.NumberCounts(redshift_distributions, bias, bias_params[7]),
                     modified_probes.WeakLensing([surface_of_last_scattering])]
 
     signal, cov = gaussian_cl_covariance_and_mean(
@@ -280,14 +280,14 @@ def cl_data_CMB_nagaraj(cosmo, nz_params, bias_params, ell, f_sky, ndens, seed, 
     #    constant_linear_bias(bias_params[2]),
     #]
 
-    # bias_params = [b_0_u, b_0_g, b_0_r, C_u, C_g, C_r, z_eff_u, z_eff_g, z_eff_r, f_NL],
-    # one interloper amplitude C per sample, b_I = C/D(z)
+    # bias_params = [b_0_u, b_0_g, b_0_r, b_I, z_eff_u, z_eff_g, z_eff_r, f_NL],
+    # one interloper amplitude b_I shared by all three samples, interloper bias = b_I/D(z)
     bias = [
-        growth_bias_I(bias_params[0], bias_params[3], bias_params[6]),
-        growth_bias_I(bias_params[1], bias_params[4], bias_params[7]),
-        growth_bias_I(bias_params[2], bias_params[5], bias_params[8]),
+        growth_bias_I(bias_params[0], bias_params[3], bias_params[4]),
+        growth_bias_I(bias_params[1], bias_params[3], bias_params[5]),
+        growth_bias_I(bias_params[2], bias_params[3], bias_params[6]),
     ]
-    cosmo_probes = [modified_probes.NumberCounts(redshift_distributions, bias, bias_params[9]),
+    cosmo_probes = [modified_probes.NumberCounts(redshift_distributions, bias, bias_params[7]),
                     modified_probes.WeakLensing([surface_of_last_scattering])]
 
     signal, cov = gaussian_cl_covariance_and_mean(
@@ -362,13 +362,13 @@ def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsiz
     cosmo - JAX-COSMO cosmology object containing cosmological parameters
     nz_params - PCA coefficients for u, g, r dropout redshift distributions
     bias_params - bias parameters
-                  [b_0_u, b_0_g, b_0_r, C_u, C_g, C_r, z_eff_u, z_eff_g, z_eff_r, f_NL]
+                  [b_0_u, b_0_g, b_0_r, b_I, z_eff_u, z_eff_g, z_eff_r, f_NL]
     k - wavenumbers [h/Mpc] to plot over
     ndens - number densities of u, g, r dropouts
     figure_size, fontsize - plotting
     red - interloper reduction factor
     z_kappa - effective redshift used for the CMB lensing tracer (no n(z))
-    f_NL - local primordial non-Gaussianity, defaults to bias_params[9]
+    f_NL - local primordial non-Gaussianity, defaults to bias_params[7]
     ----------------------------------------------------------------------
     Returns:
     fig, axes, b_eff, z_eff (b_eff is the Gaussian, f_NL = 0, effective bias)
@@ -377,7 +377,7 @@ def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsiz
     n = NPCA
 
     if f_NL is None:
-        f_NL = bias_params[9]
+        f_NL = bias_params[7]
     f_NL = float(f_NL)
 
     # effective redshift of each galaxy tracer: n(z)^2 weighted, z >= 1.5 (excludes interlopers)
@@ -391,9 +391,9 @@ def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsiz
 
     redshift_distributions = [nz_u, nz_g, nz_r]
     bias = [
-        growth_bias_I(bias_params[0], bias_params[3], bias_params[6]),
-        growth_bias_I(bias_params[1], bias_params[4], bias_params[7]),
-        growth_bias_I(bias_params[2], bias_params[5], bias_params[8]),
+        growth_bias_I(bias_params[0], bias_params[3], bias_params[4]),
+        growth_bias_I(bias_params[1], bias_params[3], bias_params[5]),
+        growth_bias_I(bias_params[2], bias_params[3], bias_params[6]),
     ]
 
     cosmo_probes = [modified_probes.NumberCounts(redshift_distributions, bias, f_NL),
