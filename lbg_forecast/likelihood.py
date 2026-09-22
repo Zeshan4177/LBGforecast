@@ -59,6 +59,27 @@ def nz_jacobian(cosmo, nz_params, bias_params, ell, ndens, red, chunk_size=5):
     return jnp.concatenate(columns, axis=0)[:n].T
 
 
+def param_jacobian(fun, params, chunk_size=3):
+    """
+    Jacobian of fun w.r.t. params, same as jacfwd(fun)(params), but only chunk_size
+    tangent directions are pushed through the cls at a time (see nz_jacobian).
+    The growth factor ODE in the interloper bias makes jacfwd over all the
+    parameters at once run out of GPU memory.
+    """
+    params = jnp.asarray(params, dtype=jnp.float64)
+    n = params.shape[0]
+    n_chunks = -(-n // chunk_size)
+    basis = jnp.zeros((n_chunks * chunk_size, n), dtype=params.dtype)
+    basis = basis.at[jnp.arange(n), jnp.arange(n)].set(1.0)
+
+    # every chunk has the same shape, so this compiles once
+    jvp_chunk = jax.jit(lambda tangents: jax.vmap(lambda t: jax.jvp(fun, (params,), (t,))[1])(tangents))
+
+    columns = [jvp_chunk(basis[i * chunk_size : (i + 1) * chunk_size]) for i in range(n_chunks)]
+    # jacobian is [ndata, nparams]
+    return jnp.concatenate(columns, axis=0)[:n].T
+
+
 class Likelihood:
     def __init__(self, path, n_override=None, mismatch_nag=None, override_seed=None, no_noise=False):
         """
@@ -142,22 +163,29 @@ class Likelihood:
 
         self.ndens = jnp.array([self.nden_u, self.nden_g, self.nden_r])
 
-        # increasing_bias_I: b(z) = b_0*(1+z)/(1+z_eff) for LBGs, b_I for interlopers (z<1.5)
+        # growth_bias_I: b(z) = b_0*(1+z)/(1+z_eff) for LBGs, C/D(z) for interlopers (z<1.5)
         # b_0 is the bias at the effective redshift of the u, g, r dropouts,
-        # z_eff is fixed at the fiducial (mean) n(z) and is not varied
+        # z_eff is fixed at the fiducial (mean) n(z) and is not varied.
+        # C is the constant clustering (Balmer break) interloper amplitude, one per sample:
+        # C = 1.4*D(0.8) = 1.4*(2/3) = 0.933 anchors the interloper bias to b = 1.4 at z = 0.8
         #self._z_eff = z_eff(self.nz_params_mean, self.ndens)
         self._z_eff_u, self._z_eff_g, self._z_eff_r = z_eff(self.nz_params_mean, self.ndens)
         self._b_lbg_u = 3.0
         self._b_lbg_g = 4.0
         self._b_lbg_r = 5.0
-        self._b_int = 1.0
+        self._C_u = 0.933
+        self._C_g = 0.933
+        self._C_r = 0.933
         self._f_NL = 0.0
 
-        # [b_0_u, b_0_g, b_0_r, b_I, z_eff_u, z_eff_g, z_eff_r, f_NL], the z_eff are not free
+        # [b_0_u, b_0_g, b_0_r, C_u, C_g, C_r, z_eff_u, z_eff_g, z_eff_r, f_NL],
+        # the z_eff are not free
         self._bias_params = jnp.array([self._b_lbg_u,
                                        self._b_lbg_g,
                                        self._b_lbg_r,
-                                       self._b_int,
+                                       self._C_u,
+                                       self._C_g,
+                                       self._C_r,
                                        self._z_eff_u,
                                        self._z_eff_g,
                                        self._z_eff_r,
@@ -219,8 +247,8 @@ class Likelihood:
         ####
         cosmo_obj = jc.Planck15(sigma8=params[0]*jnp.sqrt(norm_diff))
         bias_params = self._bias_params
+        # only b_0_u is varied; the interloper amplitudes C stay at their fiducial values
         bias_params = bias_params.at[0].set(params[1])
-        bias_params = bias_params.at[3].set(params[1])
         nz_params = self.nz_params_mean
     
         return cl_theory_CMB(cosmo_obj, nz_params, bias_params, self._ell, self.ndens, red=red)
@@ -233,8 +261,8 @@ class Likelihood:
         ####
         cosmo_obj = jc.Planck15(sigma8=params[0]*jnp.sqrt(norm_diff))
         bias_params = self._bias_params
+        # only b_0_u is varied; the interloper amplitudes C stay at their fiducial values
         bias_params = bias_params.at[0].set(params[1])
-        bias_params = bias_params.at[3].set(params[1])
         nz_params = self.nz_params_mean
     
         return cl_theory_CMB(cosmo_obj, nz_params, bias_params, self._ell, self.ndens, red=1.0)
@@ -242,7 +270,7 @@ class Likelihood:
     def mu_vec(self, params, red=1.0):
         """Reduced theory vector for fisher forecast
 
-        params = [sigma8, Omega_c, Omega_b, h, n_s, b_0_u, b_0_g, b_0_r, b_I, f_NL]
+        params = [sigma8, Omega_c, Omega_b, h, n_s, b_0_u, b_0_g, b_0_r, C_u, C_g, C_r, f_NL]
         """
 
         cosmo_obj = jc.Planck15(sigma8=params[0],
@@ -252,11 +280,13 @@ class Likelihood:
                                 n_s=params[4])
 
         bias_params = self._bias_params
-        bias_params = bias_params.at[0].set(params[5])
-        bias_params = bias_params.at[1].set(params[6])
-        bias_params = bias_params.at[2].set(params[7])
-        bias_params = bias_params.at[3].set(params[8])
-        bias_params = bias_params.at[7].set(params[9])
+        bias_params = bias_params.at[0].set(params[5])    # b_0_u
+        bias_params = bias_params.at[1].set(params[6])    # b_0_g
+        bias_params = bias_params.at[2].set(params[7])    # b_0_r
+        bias_params = bias_params.at[3].set(params[8])    # C_u
+        bias_params = bias_params.at[4].set(params[9])    # C_g
+        bias_params = bias_params.at[5].set(params[10])   # C_r
+        bias_params = bias_params.at[9].set(params[11])   # f_NL
         nz_params = self.nz_params_mean
     
         return cl_theory_CMB(cosmo_obj, nz_params, bias_params, self._ell, self.ndens, red=red)
@@ -272,11 +302,13 @@ class Likelihood:
                                 n_s=params[4])
 
         bias_params = self._bias_params
-        bias_params = bias_params.at[0].set(params[5])
-        bias_params = bias_params.at[1].set(params[6])
-        bias_params = bias_params.at[2].set(params[7])
-        bias_params = bias_params.at[3].set(params[8])
-        bias_params = bias_params.at[7].set(params[9])
+        bias_params = bias_params.at[0].set(params[5])    # b_0_u
+        bias_params = bias_params.at[1].set(params[6])    # b_0_g
+        bias_params = bias_params.at[2].set(params[7])    # b_0_r
+        bias_params = bias_params.at[3].set(params[8])    # C_u
+        bias_params = bias_params.at[4].set(params[9])    # C_g
+        bias_params = bias_params.at[5].set(params[10])   # C_r
+        bias_params = bias_params.at[9].set(params[11])   # f_NL
         nz_params = self.nz_params_mean_pop
     
         return cl_theory_CMB(cosmo_obj, nz_params, bias_params, self._ell, self.ndens, red=1.0)
@@ -284,7 +316,7 @@ class Likelihood:
     def mu_vec_deriv(self, params, red=1.0):
         """Reduced theory vector for fisher forecast
 
-        params = [Omega_m, S8, Omega_b, h, n_s, b_0_u, b_0_g, b_0_r, b_I, f_NL]
+        params = [Omega_m, S8, Omega_b, h, n_s, b_0_u, b_0_g, b_0_r, C_u, C_g, C_r, f_NL]
         """
 
         o_m = params[0]
@@ -297,11 +329,13 @@ class Likelihood:
                                 n_s=params[4])
 
         bias_params = self._bias_params
-        bias_params = bias_params.at[0].set(params[5])
-        bias_params = bias_params.at[1].set(params[6])
-        bias_params = bias_params.at[2].set(params[7])
-        bias_params = bias_params.at[3].set(params[8])
-        bias_params = bias_params.at[7].set(params[9])
+        bias_params = bias_params.at[0].set(params[5])    # b_0_u
+        bias_params = bias_params.at[1].set(params[6])    # b_0_g
+        bias_params = bias_params.at[2].set(params[7])    # b_0_r
+        bias_params = bias_params.at[3].set(params[8])    # C_u
+        bias_params = bias_params.at[4].set(params[9])    # C_g
+        bias_params = bias_params.at[5].set(params[10])   # C_r
+        bias_params = bias_params.at[9].set(params[11])   # f_NL
         nz_params = self.nz_params_mean
     
         return cl_theory_CMB(cosmo_obj, nz_params, bias_params, self._ell, self.ndens, red=red)
@@ -316,11 +350,13 @@ class Likelihood:
                         n_s=params[4])
 
         bias_params = self._bias_params
-        bias_params = bias_params.at[0].set(params[5])
-        bias_params = bias_params.at[1].set(params[6])
-        bias_params = bias_params.at[2].set(params[7])
-        bias_params = bias_params.at[3].set(params[8])
-        bias_params = bias_params.at[7].set(params[9])
+        bias_params = bias_params.at[0].set(params[5])    # b_0_u
+        bias_params = bias_params.at[1].set(params[6])    # b_0_g
+        bias_params = bias_params.at[2].set(params[7])    # b_0_r
+        bias_params = bias_params.at[3].set(params[8])    # C_u
+        bias_params = bias_params.at[4].set(params[9])    # C_g
+        bias_params = bias_params.at[5].set(params[10])   # C_r
+        bias_params = bias_params.at[9].set(params[11])   # f_NL
 
         nz_params = self.nz_params_mean
 
@@ -338,8 +374,7 @@ class Likelihood:
 
         inv_cov = jnp.linalg.inv(self.C)
         mu_vec_fixed = partial(self.mu_vec, red=red)
-        jac_at_mean = jax.jit(jax.jacfwd(mu_vec_fixed, argnums=0))
-        dmudp = jac_at_mean(params)
+        dmudp = param_jacobian(mu_vec_fixed, params)
 
         F = dmudp.T@inv_cov@dmudp
 
@@ -349,8 +384,7 @@ class Likelihood:
 
         inv_cov = jnp.linalg.inv(self.Cm)
         mu_vec_fixed = partial(self.mu_vec, red=red)
-        jac_at_mean = jax.jit(jax.jacfwd(mu_vec_fixed, argnums=0))
-        dmudp = jac_at_mean(params)
+        dmudp = param_jacobian(mu_vec_fixed, params)
 
         F = dmudp.T@inv_cov@dmudp
 
@@ -360,8 +394,7 @@ class Likelihood:
 
         inv_cov = jnp.linalg.inv(self.C)
         mu_vec_fixed = partial(self.mu_vec_deriv, red=red)
-        jac_at_mean = jax.jit(jax.jacfwd(mu_vec_fixed, argnums=0))
-        dmudp = jac_at_mean(params)
+        dmudp = param_jacobian(mu_vec_fixed, params)
 
         F = dmudp.T@inv_cov@dmudp
 
@@ -371,8 +404,7 @@ class Likelihood:
 
         inv_cov = jnp.linalg.inv(self.Cm)
         mu_vec_fixed = partial(self.mu_vec_deriv, red=red)
-        jac_at_mean = jax.jit(jax.jacfwd(mu_vec_fixed, argnums=0))
-        dmudp = jac_at_mean(params)
+        dmudp = param_jacobian(mu_vec_fixed, params)
 
         F = dmudp.T@inv_cov@dmudp
 
@@ -382,8 +414,7 @@ class Likelihood:
 
         inv_cov = jnp.linalg.inv(self.C)
         mu_vec_fixed = partial(self.mu_vec_ww, red=red)
-        jac_at_mean = jax.jit(jax.jacfwd(mu_vec_fixed, argnums=0))
-        dmudp = jac_at_mean(params)
+        dmudp = param_jacobian(mu_vec_fixed, params)
 
         F = dmudp.T@inv_cov@dmudp
 
@@ -392,8 +423,7 @@ class Likelihood:
     def fisher_sig(self, params):
 
         inv_cov = jnp.linalg.inv(self.C)
-        jac_at_mean = jax.jit(jax.jacfwd(self.mu_vec_ww, argnums=0))
-        dmudp = jac_at_mean(params)
+        dmudp = param_jacobian(self.mu_vec_ww, params)
 
         F = dmudp.T@inv_cov@dmudp
 

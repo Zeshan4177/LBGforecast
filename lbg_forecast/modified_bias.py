@@ -130,3 +130,33 @@ class increasing_bias_I(container):
         # last grid value, and the Limber integral runs to z=2000 (CMB lensing)
         z = np.minimum(z, 7.0)
         return np.where(z < 1.5, b_I, b_0 * (1 + z) / (1 + z_eff))
+
+
+@register_pytree_node_class
+class growth_bias_I(container):
+    """
+    Class representing an LBG bias with a constant clustering (Balmer break)
+    interloper bias
+
+    b(z) = C / D(z)                    for z < 1.5   (interlopers)
+    b(z) = b_0 (1 + z) / (1 + z_eff)   for z >= 1.5  (LBGs)
+
+    Parameters:
+    -----------
+    b_0: LBG bias at z_eff
+    C: interloper amplitude, b_I = C/D(z), C = 1.4*D(0.8) = 0.933 gives b_I(0.8) = 1.4
+    z_eff: effective redshift of the sample (pivot for b_0)
+    """
+
+    def __call__(self, cosmo, z):
+        b_0 = self.params[0]
+        C = self.params[1]
+        z_eff = self.params[2]
+        # clamp above z=7: the n(z) grid ends at ~7 but the g dropout n(z) keeps its
+        # last grid value, and the Limber integral runs to z=2000 (CMB lensing)
+        z = np.minimum(z, 7.0)
+        return np.where(
+            z < 1.5,
+            C / bkgrd.growth_factor(cosmo, z2a(z)),
+            b_0 * (1 + z) / (1 + z_eff),
+        )
