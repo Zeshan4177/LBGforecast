@@ -171,7 +171,7 @@ class Likelihood:
         # single b_I is shared by all three samples. The interloper bias is b_I/D(z), so
         # b_I = 1.4*D(0.8) = 1.4*(2/3) = 0.933 gives an interloper bias of 1.4 at z = 0.8
         #self._z_eff = z_eff(self.nz_params_mean, self.ndens)
-        self._z_eff_u, self._z_eff_g, self._z_eff_r = z_eff(self.nz_params_mean, self.ndens)
+        self._z_eff_u, self._z_eff_g, self._z_eff_r = z_eff(define_cosmo(), self.nz_params_mean, self.ndens)
         self._b_lbg_u = 3.0
         self._b_lbg_g = 4.0
         self._b_lbg_r = 5.0

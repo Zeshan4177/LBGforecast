@@ -81,12 +81,39 @@ def z_space():
     return jnp.arange(0, 7, 0.01)
 
 
-def z_eff(nz_params, ndens, red=1.0, z_min=1.5):
+def limber_weight(cosmo, z, kernel_i, kernel_j):
     """
-    Effective redshift of each dropout sample, excluding interlopers:
-    z_eff = int_{z_min} z n(z)^2 dz / int_{z_min} n(z)^2 dz
+    Limber integrand of C_ell^{ij} in z, without P(k, z=0):
+    w_ij(z) = K_i(z) K_j(z) D^2(z) / (H(z) chi^2(z))
+    This is the angular_cl integrand, with dchi/dz = c/H and the constant
+    factors dropped, since only ratios of integrals of w are used.
     --------------------------------------------------------------------
     Parameters:
+    cosmo - JAX-COSMO cosmology object containing cosmological parameters
+    z - redshifts
+    kernel_i, kernel_j - probe kernels evaluated at z (as returned by probe.kernel)
+    ----------------------------------------------------------------------
+    Returns:
+    w_ij(z)
+
+    """
+    a = z2a(z)
+    chi = jc.background.radial_comoving_distance(cosmo, a)
+    D = jc.background.growth_factor(cosmo, a)
+    return kernel_i * kernel_j * D**2 / (jc.background.H(cosmo, a) * jnp.clip(chi**2, 1.0))
+
+
+def z_eff(cosmo, nz_params, ndens, red=1.0, z_min=1.5):
+    """
+    Effective redshift of each dropout sample, excluding interlopers,
+    weighted by the full (f_NL = 0) Limber kernel of the auto spectrum:
+    z_eff = int_{z_min} z w(z) dz / int_{z_min} w(z) dz,
+    w(z) = n^2(z) b^2(z) D^2(z) H(z) / chi^2(z)
+    Above z_min the LBG bias is b_0 (1+z)/(1+z_eff), so only its (1+z) shape
+    enters w and the pivot z_eff cancels (no circularity).
+    --------------------------------------------------------------------
+    Parameters:
+    cosmo - JAX-COSMO cosmology object containing cosmological parameters
     nz_params - PCA coefficients for u, g, r dropout redshift distributions
     ndens - number densities of u, g, r dropouts
     red - interloper reduction factor
@@ -108,8 +135,10 @@ def z_eff(nz_params, ndens, red=1.0, z_min=1.5):
 
     z_effs = []
     for nz in [nz_u, nz_g, nz_r]:
-        nz2 = nz(z)**2
-        z_effs.append(jnp.trapezoid(z * nz2, z) / jnp.trapezoid(nz2, z))
+        # density kernel n(z) b(z) H(z), with the (1+z) shape of the LBG bias
+        kernel = nz(z) * (1 + z) * jc.background.H(cosmo, z2a(z))
+        w = limber_weight(cosmo, z, kernel, kernel)
+        z_effs.append(jnp.trapezoid(z * w, z) / jnp.trapezoid(w, z))
 
     return jnp.array(z_effs)
 
@@ -347,16 +376,19 @@ def plot_ncls(cls_theory, ell, figure_size, fontsize, ncls):
 
 
 def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsize,
-                   red=1.0, z_kappa=2.0, f_NL=None):
+                   red=1.0, f_NL=None, z_min=1.5):
     """
-    Plots the effective tracer power spectra b_X b_Y P_m(k) for every tracer
+    Plots the effective tracer power spectra <b_X b_Y> P_m(k, z_eff) for every tracer
     pair, in the same order and triangle layout as the angular cls.
-    Each galaxy tracer's bias is the n(z)-weighted bias, b_eff = int n_X(z) b(z) dz,
-    which is what the Limber integral effectively uses. Each galaxy tracer's effective
-    redshift is z_eff = int_{1.5} z n(z)^2 dz / int_{1.5} n(z)^2 dz (see z_eff()).
-    With f_NL != 0 the bias is scale dependent, b_X(k) = int n_X(z) [b(z) + b_PNG(k, z)] dz,
-    and the Gaussian (f_NL = 0) spectra are overplotted dashed. |P_XY(k)| is plotted, since
-    for f_NL < 0 the bias can turn negative on large scales.
+    Every pair XY is weighted by its own Limber kernel (see limber_weight()),
+    w_XY(z) = K_X(z) K_Y(z) D^2(z) / (H(z) chi^2(z)), with K the probe kernels for
+    unit galaxy bias, so the cross spectra use the kernel overlap of the two tracers.
+    The galaxy kernels are cut below z_min to exclude interlopers, as in z_eff():
+    z_eff = int z w_XY b_X b_Y dz / int w_XY b_X b_Y dz (Gaussian biases, f_NL = 0)
+    <b_X b_Y>(k) = int w_XY b_X(k, z) b_Y(k, z) dz / int w_XY dz
+    With f_NL != 0 the bias is scale dependent, b(k, z) = b(z) + b_PNG(k, z), and the
+    Gaussian (f_NL = 0) spectra are overplotted dashed. |P_XY(k)| is plotted, since
+    for f_NL < 0 the bias can turn negative on large scales. CMB lensing has b = 1.
     --------------------------------------------------------------------
     Parameters:
     cosmo - JAX-COSMO cosmology object containing cosmological parameters
@@ -367,11 +399,12 @@ def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsiz
     ndens - number densities of u, g, r dropouts
     figure_size, fontsize - plotting
     red - interloper reduction factor
-    z_kappa - effective redshift used for the CMB lensing tracer (no n(z))
     f_NL - local primordial non-Gaussianity, defaults to bias_params[7]
+    z_min - lower integration limit for the galaxy kernels (interloper cut)
     ----------------------------------------------------------------------
     Returns:
-    fig, axes, b_eff, z_eff (b_eff is the Gaussian, f_NL = 0, effective bias)
+    fig, axes, bb_eff, z_eff, one entry per tracer pair in the cl ordering
+    (bb_eff is the Gaussian, f_NL = 0, <b_X b_Y>)
 
     """
     n = NPCA
@@ -379,9 +412,6 @@ def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsiz
     if f_NL is None:
         f_NL = bias_params[7]
     f_NL = float(f_NL)
-
-    # effective redshift of each galaxy tracer: n(z)^2 weighted, z >= 1.5 (excludes interlopers)
-    z_effs = list(z_eff(nz_params, ndens, red=red))
 
     surface_of_last_scattering = delta_nz(1100., gals_per_arcmin2 = 1e20, zmax=2000.)
     red = jnp.array([red])
@@ -395,33 +425,32 @@ def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsiz
         growth_bias_I(bias_params[1], bias_params[3], bias_params[5]),
         growth_bias_I(bias_params[2], bias_params[3], bias_params[6]),
     ]
+    unit_bias = [constant_linear_bias(1.0)] * len(bias)
 
-    cosmo_probes = [modified_probes.NumberCounts(redshift_distributions, bias, f_NL),
+    # probe kernels with unit galaxy bias and f_NL = 0, shape [ntracers, nz]. Without
+    # PNG the kernels do not depend on ell. The n(z) grid is extended to last
+    # scattering, as the angular cl integral is, so the lensing kernel is complete
+    z = jnp.concatenate([z_space(), jnp.geomspace(7.0, 1100.0, 400)])
+    cosmo_probes = [modified_probes.NumberCounts(redshift_distributions, unit_bias, 0.0),
                     modified_probes.WeakLensing([surface_of_last_scattering])]
+    kernels = jnp.vstack([p.kernel(cosmo, z, 1000.0) for p in cosmo_probes])
+    # galaxy integrals start at z_min (interloper cut), as in z_eff(); CMB lensing keeps
+    # its full range
+    ngal = len(redshift_distributions)
+    kernels = kernels.at[:ngal].set(jnp.where(z >= z_min, kernels[:ngal], 0.0))
     cl_index = modified_angular_cl._get_cl_ordering(cosmo_probes)
 
-    # effective bias of each galaxy tracer, weighted by its full n(z) (interlopers included)
-    # b_eff is the Gaussian part, b_eff_k [nk] adds the n(z)-weighted PNG term
-    z = z_space()
-    b_eff = []
-    b_eff_k = []
-    for nz, b in zip(redshift_distributions, bias):
-        nz_z = nz(z)
-        nz_z = nz_z / jnp.trapezoid(nz_z, z)
-        b_z = b(cosmo, z)
-        b_eff.append(jnp.trapezoid(nz_z * b_z, z))
-        # b_PNG has shape [nk, nz]
-        b_png = jax.vmap(lambda kk: modified_probes.png_bias(cosmo, b_z, kk, z, f_NL))(k)
-        b_eff_k.append(b_eff[-1] + jnp.trapezoid(nz_z * b_png, z, axis=1))
+    # Gaussian bias b [nz] and scale dependent bias b_k [nk, nz] of each tracer
+    b_z = []
+    b_kz = []
+    for b in bias:
+        b_z.append(b(cosmo, z))
+        b_png = jax.vmap(lambda kk: modified_probes.png_bias(cosmo, b_z[-1], kk, z, f_NL))(k)
+        b_kz.append(b_z[-1] + b_png)
 
     # CMB lensing has no bias
-    b_eff.append(1.0)
-    b_eff_k.append(jnp.ones_like(k))
-    z_effs.append(z_kappa)
-
-    b_eff = jnp.array(b_eff)
-    b_eff_k = jnp.array(b_eff_k)
-    z_effs = jnp.array(z_effs)
+    b_z.append(jnp.ones_like(z))
+    b_kz.append(jnp.ones((len(k), len(z))))
 
     names = ["u", "g", "r", r"$\kappa$"]
     ntracers = len(names)
@@ -431,18 +460,28 @@ def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsiz
         for j in range(i + 1, ntracers):
             axes[i][j].set_visible(False)
 
+    bb_eff = []
+    z_effs = []
     for i, j in cl_index:
+        w = limber_weight(cosmo, z, kernels[i], kernels[j])
+        w_b = w * b_z[i] * b_z[j]
+        z_pair = jnp.trapezoid(z * w_b, z) / jnp.trapezoid(w_b, z)
+        bb = jnp.trapezoid(w_b, z) / jnp.trapezoid(w, z)
+        bb_k = jnp.trapezoid(w * b_kz[i] * b_kz[j], z, axis=1) / jnp.trapezoid(w, z)
+        bb_eff.append(bb)
+        z_effs.append(z_pair)
+
         ax = axes[j][i]
-        z_pair = 0.5 * (z_effs[i] + z_effs[j])
         pk_pair = pk(cosmo, k, z_pair)
-        ax.plot(k, jnp.abs(b_eff_k[i] * b_eff_k[j] * pk_pair), label=r"$f_{NL}=%g$" % f_NL)
+        ax.plot(k, jnp.abs(bb_k * pk_pair), label=r"$f_{NL}=%g$" % f_NL)
         if f_NL != 0.0:
-            ax.plot(k, b_eff[i] * b_eff[j] * pk_pair, ls="--", color="k", label=r"$f_{NL}=0$")
+            ax.plot(k, bb * pk_pair, ls="--", color="k", label=r"$f_{NL}=0$")
         # scales probed by the ell = 200-1000 cls at z ~ 3-5
         ax.axvspan(0.04, 0.2, color="grey", alpha=0.15)
         ax.set_xscale("log")
         ax.set_yscale("log")
-        ax.set_title(names[i] + r"$\times$" + names[j], fontsize=fontsize)
+        ax.set_title(names[i] + r"$\times$" + names[j] + r", $z_{eff}=%.2f$" % z_pair,
+                     fontsize=fontsize)
 
     for i in range(ntracers):
         axes[i][0].set_ylabel("$P_{XY}(k)$", fontsize=fontsize)
@@ -453,10 +492,13 @@ def plot_tracer_pk(cosmo, nz_params, bias_params, k, ndens, figure_size, fontsiz
 
     fig.tight_layout()
 
-    for name, b, zz in zip(names, b_eff, z_effs):
-        print(name, "b_eff = %.3f, z_eff = %.3f" % (b, zz))
+    bb_eff = jnp.array(bb_eff)
+    z_effs = jnp.array(z_effs)
 
-    return fig, axes, b_eff, z_effs
+    for (i, j), bb, zz in zip(cl_index, bb_eff, z_effs):
+        print("%s x %s: <b b>_eff = %.3f, z_eff = %.3f" % (names[i], names[j], bb, zz))
+
+    return fig, axes, bb_eff, z_effs
 
 
 def compare_cls(cl1, cl2, ell, figure_size, fontsize, ncls):
